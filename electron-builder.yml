@@ -49,3 +49,12 @@ linux:
 directories:
   buildResources: 'build'
   output: 'dist'
+
+# --- GitHub Releases 게시 설정 추가 ---
+publish:
+  provider: github
+  owner: MacchiatoR # GitHub 사용자명 또는 조직명
+  repo: HealingCampLauncherElectron # GitHub 저장소명
+  private: true # 만약 private 저장소라면 true로 설정
+  token: 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
+  releaseType: release

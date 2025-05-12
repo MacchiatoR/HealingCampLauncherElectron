@@ -1,11 +1,14 @@
 {
   "name": "healingcamplauncherelectron",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "pack": "electron-builder --dir", 
+    "dist": "electron-builder",      
+    "release": "electron-builder --publish always" 
   },
   "keywords": [],
   "author": "",
@@ -13,7 +16,8 @@
   "type": "commonjs",
   "devDependencies": {
     "electron": "^36.2.0",
-    "electron-reload": "^2.0.0-alpha.1"
+    "electron-reload": "^2.0.0-alpha.1",
+    "electron-builder": "^26.0.12"
   },
   "dependencies": {
     "@azure/msal-browser": "^4.12.0",
@@ -28,5 +32,9 @@
     "keytar": "^7.9.0",
     "prismarine-auth": "^2.7.0",
     "semver": "^7.7.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MacchiatoR/HealingCampLauncherElectron.git"
   }
 }
