@@ -1,0 +1,46 @@
+      
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Loading...</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            /* background-color: transparent; */
+            overflow: hidden;
+        }
+        #splash-logo {
+            width: 400px;
+            height: 400px;
+            object-fit: contain; /* 이미지 비율 유지하며 400x400 안에 모두 보이도록 */
+            opacity: 0;
+            animation: fadeInOut 3s ease-in-out forwards;
+        }
+        @keyframes fadeInOut {
+            0% { opacity: 0; }
+            50% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <img src="./assets/logo.png" alt="App Logo" id="splash-logo">
+    <script>
+        const splashLogo = document.getElementById('splash-logo');
+        splashLogo.addEventListener('animationend', () => {
+            if (window.electronAPI && window.electronAPI.splashDone) {
+                window.electronAPI.splashDone();
+            } else {
+                console.warn("electronAPI.splashDone not found. Main window might not open automatically if relying on IPC.");
+            }
+        });
+    </script>
+</body>
+</html>
+
+    

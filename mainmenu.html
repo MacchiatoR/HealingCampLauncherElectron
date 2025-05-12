@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>힐링캠프 - 메인 메뉴</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Nanum+Pen+Script&display=swap');
+
+        :root {
+            --bg-color: #F5EFE6; /* login.html 배경색과 유사하게 */
+            --pattern-color-soft: rgba(220, 190, 160, 0.08); /* 매우 옅은 패턴 색상 */
+            --text-primary: #775532; /* login.html 제목 텍스트와 유사하게 */
+            --text-secondary: #8C6E54; /* login.html 본문 텍스트와 유사하게 */
+            --container-border-color: #D4BBA0; /* 컨테이너 테두리 (연한 갈색) */
+            --button-bg: #E0D8CC; /* 버튼 배경 (매우 연한 베이지/그레이) */
+            --button-text: var(--text-primary);
+            --button-border-color: #C8B09A; /* 버튼 테두리 */
+            --launch-button-bg: #CFE1C4; /* 게임 시작 버튼 배경 (연한 녹색) */
+            --launch-button-text: #506A43; /* 게임 시작 텍스트 (짙은 녹색) */
+            --launch-button-border: #A5C896; /* 게임 시작 버튼 점선 테두리 */
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Gowun Dodum', sans-serif;
+            height: 100vh;
+            background-color: var(--bg-color);
+            /* 부드러운 배경 패턴 (선택 사항) */
+            background-image:
+                linear-gradient(45deg, var(--pattern-color-soft) 25%, transparent 25%),
+                linear-gradient(-45deg, var(--pattern-color-soft) 25%, transparent 25%),
+                linear-gradient(45deg, transparent 75%, var(--pattern-color-soft) 75%),
+                linear-gradient(-45deg, transparent 75%, var(--pattern-color-soft) 75%);
+            background-size: 20px 20px;
+            color: var(--text-secondary);
+            overflow: hidden;
+            opacity: 0;
+            animation: fadeIn 0.5s ease-in-out forwards;
+            user-select: none;
+        }
+
+        @keyframes fadeIn { to { opacity: 1; } }
+        body.fade-out { opacity: 1; animation: fadeOut 0.5s ease-in-out forwards; }
+        @keyframes fadeOut { to { opacity: 0; } }
+
+        .app-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            -webkit-app-region: drag;
+        }
+
+        /* --- 상단 바 --- */
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 18px 30px; /* 패딩 조정 */
+            border-bottom: 1px solid var(--container-border-color); /* 하단 구분선 */
+        }
+
+        .logo-area {
+            font-family: 'Nanum Pen Script', cursive;
+            font-size: 2.6em; /* 크기 유지 또는 살짝 조정 */
+            font-weight: normal;
+            color: var(--text-primary);
+            -webkit-app-region: no-drag;
+        }
+
+        .menu-buttons {
+            display: flex;
+            gap: 12px; /* 간격 조정 */
+            -webkit-app-region: no-drag;
+        }
+
+        .menu-button {
+            font-family: 'Gowun Dodum', sans-serif;
+            padding: 9px 18px; /* 패딩 조정 */
+            border: 1px solid var(--button-border-color); /* 테두리 스타일 변경 */
+            background-color: var(--button-bg);
+            color: var(--button-text);
+            border-radius: 20px; /* 더 둥근 버튼 */
+            cursor: pointer;
+            font-size: 0.95em; /* 폰트 크기 조정 */
+            transition: background-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .menu-button:hover {
+            background-color: darken(var(--button-bg), 5%);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .menu-button:active {
+            background-color: darken(var(--button-bg), 10%);
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        /* --- 메인 영역 --- */
+        .main-area {
+            flex-grow: 1;
+            display: flex;
+            align-items: stretch; /* 자식 요소들이 높이를 꽉 채우도록 */
+            justify-content: space-between; /* 양쪽으로 분배 */
+            padding: 30px; /* 전체 패딩 */
+            gap: 30px; /* 메인 이미지와 컨트롤 영역 사이 간격 */
+        }
+
+        .main-image-container {
+            flex-grow: 1;
+            background-color: #fff;
+            /*padding: 20px;*/
+            border: 2px solid var(--container-border-color);
+            border-radius: 25px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.07);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Nanum Pen Script', cursive;
+            font-size: 3em;
+            color: var(--text-secondary);
+            text-align: center;
+            -webkit-app-region: no-drag;
+
+            max-width: 800px;   /* 원하는 최대 가로폭 */
+            max-height: 600px;  /* 원하는 최대 세로높이 */
+            width: 100%;
+            height: 100%;
+            box-sizing: border-box;
+        }
+
+        .img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 25px; /* 이미지도 컨테이너와 동일한 둥근 모서리 적용 (선택 사항) */
+        }
+
+        .controls-area {
+            flex-basis: 280px; /* 오른쪽 컨트롤 영역 너비 고정 또는 비율 */
+            flex-shrink: 0; /* 줄어들지 않도록 */
+            display: flex;
+            flex-direction: column; /* 내부 요소 수직 정렬 */
+            justify-content: flex-end; /* 게임 시작 버튼을 아래쪽에 배치 */
+            align-items: center; /* 가로 중앙 정렬 */
+            padding-bottom: 10px; /* 하단 여백 */
+        }
+
+        .launch-button {
+            font-family: 'Gowun Dodum', sans-serif;
+            background-color: var(--launch-button-bg);
+            color: var(--launch-button-text);
+            width: 100%; /* 부모 너비 꽉 채움 */
+            padding: 18px 25px; /* 패딩 조정 */
+            font-size: 1.4em; /* 폰트 크기 조정 */
+            border: 2px dashed var(--launch-button-border); /* 스케치처럼 점선 테두리 */
+            border-radius: 25px; /* 스케치의 둥근 모서리 */
+            cursor: pointer;
+            transition: background-color 0.2s ease, box-shadow 0.2s ease;
+            text-align: center;
+            box-shadow: 0 3px 8px rgba(0,0,0,0.05);
+            -webkit-app-region: no-drag;
+        }
+        .launch-button:hover {
+            background-color: darken(var(--launch-button-bg), 5%);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .launch-button:active {
+            background-color: darken(var(--launch-button-bg), 10%);
+            box-shadow: inset 0 1px 4px rgba(0,0,0,0.15);
+        }
+
+        /* 커스텀 윈도우 컨트롤 버튼 (닫기) */
+        .window-controls {
+            position: absolute;
+            top: 8px; /* 위치 미세 조정 */
+            right: 8px;
+            -webkit-app-region: no-drag;
+            z-index: 1000;
+        }
+        .window-controls button {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.3em; /* 크기 조정 */
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+        .window-controls button:hover {
+            background-color: rgba(0,0,0,0.08);
+            color: var(--text-primary);
+        }
+
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <div class="window-controls">
+            <button id="close-btn" title="닫기" aria-label="닫기">×</button>
+        </div>
+
+        <header class="top-bar">
+            <div class="logo-area">힐링캠프</div>
+            <nav class="menu-buttons">
+                <button class="menu-button" id="settingsButton">게임 설정</button>
+                <button class="menu-button" id="logoutButton">로그아웃</button>
+            </nav>
+        </header>
+
+        <main class="main-area">
+            <div class="main-image-container">
+                <img src="./assets/thumbnail.png" alt ="Thumbnail" class="img">
+            </div>
+
+            <div class="controls-area">
+                <button class="launch-button" id="launchGameButton">게임 시작</button>
+            </div>
+        </main>
+        <!-- 장식 요소(별, 꽃)와 하단 페이지 표시기는 새 스케치에서 생략됨 -->
+    </div>
+
+    <script>
+        // 커스텀 닫기 버튼 기능 (예시)
+        const closeBtn = document.getElementById('close-btn');
+        if (closeBtn && window.electronAPI && typeof window.electronAPI.requestCloseCurrentWindow === 'function') {
+            closeBtn.addEventListener('click', () => {
+                window.electronAPI.requestCloseCurrentWindow();
+            });
+        } else if(closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                alert('닫기 기능이 연결되지 않았습니다. (preload 설정 필요)');
+            });
+        }
+
+        // document.getElementById('settingsButton').addEventListener('click', () => { /* 설정 화면 로직 */ });
+        // document.getElementById('logoutButton').addEventListener('click', () => { /* 로그아웃 로직 */ });
+        // document.getElementById('launchGameButton').addEventListener('click', () => { /* 게임 시작 로직 */ });
+    </script>
+</body>
+</html>
