@@ -62,7 +62,14 @@ function registerAutoUpdaterEvents() {
             updaterEventSender.send('autoUpdateNotification', 'update-available', info);
         }
         if (!isDev && (process.platform === 'darwin' || !autoUpdater.autoDownload)) {
-            dialog.showMessageBox({ /* ... 다운로드 여부 확인 ... */ }).then(result => {
+            dialog.showMessageBox({  type: 'info',
+            title: '업데이트 알림',
+            message: `새로운 버전 ${info.version}이 있습니다.`,
+            detail: '지금 다운로드하고 설치 준비를 하시겠습니까?\n(앱은 다운로드 후 다시 시작해야 업데이트됩니다.)',
+            buttons: ['지금 다운로드', '나중에 알림'],
+            defaultId: 0, // 기본 선택 버튼
+            cancelId: 1   // 취소 버튼 (ESC 등) 
+            }).then(result => {
                 if (result.response === 0) autoUpdater.downloadUpdate();
             });
         }
@@ -82,6 +89,24 @@ function registerAutoUpdaterEvents() {
         if (updaterEventSender && !updaterEventSender.isDestroyed()) {
             updaterEventSender.send('autoUpdateNotification', 'realerror', err);
         }
+        dialog.showMessageBox({
+            type: 'error',
+            title: '업데이트 오류',
+            message: '업데이트 중 오류가 발생했습니다.',
+            detail: `오류 내용: ${err.message}\n\n애플리케이션을 계속 사용하시겠습니까?`,
+            buttons: ['계속 사용', '앱 종료'],
+            defaultId: 0,
+            cancelId: 1
+        }).then(result => {
+            if (result.response === 0) {
+                proceedToLoginWindow();
+            } else {
+                app.quit();
+            }
+        }).catch(dialogErr => {
+            log.error('[AutoUpdater] Error showing error dialog:', dialogErr);
+            proceedToLoginWindow(); // 다이얼로그 오류 시에도 로그인 창으로 진행 (안전장치)
+        });
         // 이 이벤트도 로그인 창 진행 또는 앱 종료 결정 트리거로 사용될 수 있음
     });
 
@@ -99,7 +124,15 @@ function registerAutoUpdaterEvents() {
         if (updaterEventSender && !updaterEventSender.isDestroyed()) {
             updaterEventSender.send('autoUpdateNotification', 'update-downloaded', info);
         }
-        dialog.showMessageBox({ /* ... 설치 여부 확인 ... */ }).then(result => {
+        dialog.showMessageBox({ 
+            type: 'info',
+            title: '업데이트 다운로드 완료',
+            message: `새로운 버전 ${info.version}의 다운로드가 완료되었습니다.`,
+            detail: '지금 설치하고 앱을 다시 시작하시겠습니까?',
+            buttons: ['지금 설치 및 재시작', '나중에 (앱 종료 시 자동 설치)'],
+            defaultId: 0,
+            cancelId: 1
+        }).then(result => {
             if (result.response === 0) autoUpdater.quitAndInstall();
         });
     });
