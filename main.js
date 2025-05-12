@@ -84,7 +84,7 @@ function registerAutoUpdaterEvents() {
             proceedToLoginWindow();
         });
     });
-    
+
     autoUpdater.on('update-not-available', (info) => {
         log.info('[AutoUpdater] Event: update-not-available.', info);
         if (updaterEventSender && !updaterEventSender.isDestroyed()) {
@@ -170,6 +170,23 @@ function configureAutoUpdater(allowPrereleaseSetting) {
     }
 }
 
+function checkForInitialUpdates() {
+    autoUpdater.checkForUpdates()
+        .catch(err => {
+            log.error('[AutoUpdater] Initial checkForUpdates() promise rejected:', err);
+            dialog.showMessageBox({
+                type: 'error',
+                title: '업데이트 확인 실패',
+                message: '업데이트 확인 중 오류가 발생했습니다.',
+                detail: `오류: ${err.message}\n\n로그인 화면으로 계속 진행합니다.`,
+                buttons: ['확인']
+            }).then(() => {
+                proceedToLoginWindow();
+            });
+        });
+    // .then() 블록은 제거. 결과 처리는 이벤트 핸들러에 맡김.
+}
+
 // --- 창 생성 함수들 ---
 function createSplashWindow() {
     splashWindow = new BrowserWindow({
@@ -205,8 +222,20 @@ function createLoginWindow() {
     });
 
     loginWindow.loadFile(path.join(__dirname, 'login.html'));
-    loginWindow.once('ready-to-show', () => { if (loginWindow) loginWindow.show(); });
-    loginWindow.on('closed', () => { loginWindow = null; });
+    loginWindow.once('ready-to-show', () => {
+        if (loginWindow) {
+            loginWindow.show();
+            log.info('[WindowManager] Login window shown, setting as updaterEventSender.');
+            updaterEventSender = loginWindow.webContents; // 로그인 창으로 알림 대상 설정
+        }
+    });
+    loginWindow.on('closed', () => {
+        log.info('[WindowManager] Login window closed.');
+        loginWindow = null;
+        // 로그인 창이 닫힐 때 updaterEventSender를 null로 할지, mainWindow로 할지 등 결정 필요
+        // if (updaterEventSender === loginWindow.webContents) updaterEventSender = null;
+    });
+    return loginWindow;
 }
 
 function createMainWindow() {
@@ -239,14 +268,17 @@ function createMainWindow() {
 
 // 로그인 창으로 진행하는 함수
 function proceedToLoginWindow() {
-    log.info('Proceeding to login window.');
+    log.info('Proceeding to login window (after splash close or update check).');
+    // 스플래시 창이 있다면 이미 닫혔거나 여기서 닫도록 보장
     if (splashWindow && !splashWindow.isDestroyed()) {
-        splashWindow.close();
+        log.warn('[WindowManager] Splash window was not closed before proceeding to login. Closing now.');
+        splashWindow.close(); // 확실히 닫기
     }
-    if (!loginWindow && !mainWindow) { // mainWindow 조건은 사실상 불필요 (로그인 전이므로)
+
+    if (!loginWindow || loginWindow.isDestroyed()) {
         createLoginWindow();
-    } else if (loginWindow && !loginWindow.isDestroyed()) {
-        loginWindow.focus(); // 이미 있다면 포커스
+    } else {
+        loginWindow.focus();
     }
 }
 
@@ -385,48 +417,21 @@ app.whenReady().then(async () => {
 
     // --- 일반 창 전환 IPC 핸들러 ---
     ipcMain.on(IPC_CHANNELS.SPLASH_DONE, () => {
-        log.info("Splash done. Checking for updates...");
+        log.info("Splash done. Closing splash and then checking for updates...");
 
-        // updaterEventSender 설정: 스플래시 창이 닫히기 전에 알림을 받을 수 있도록.
-        // 하지만 스플래시 창은 곧 닫히므로, 로그인 창이나 메인 창으로 알림 대상을 변경하는 것이 좋음.
-        // 여기서는 초기 확인에 대한 직접적인 UI 피드백은 dialog를 사용.
+        // 1. 스플래시 창 닫기
         if (splashWindow && !splashWindow.isDestroyed()) {
-            updaterEventSender = splashWindow.webContents; // 임시로 설정
-        }
-
-        autoUpdater.checkForUpdates()
-            .then(updateCheckResult => {
-                log.info('[AutoUpdater] Initial checkForUpdates promise resolved. Result:', updateCheckResult);
-
-                // updateCheckResult가 null이거나, 업데이트 정보가 없거나, 현재 버전과 동일한 경우
-                // 이는 electron-updater가 업데이트가 없다고 판단한 상황이거나,
-                // 개발 환경에서 'Skip checkForUpdates...' 로그와 함께 확인을 건너뛴 경우일 수 있음.
-                // 이런 경우, 'update-not-available' 이벤트가 발생하지 않을 수 있으므로
-                // 명시적으로 로그인 창으로 진행하도록 처리.
-                if (updateCheckResult === null ||
-                    !updateCheckResult.updateInfo ||
-                    updateCheckResult.updateInfo.version === app.getVersion()) {
-
-                    log.info("No update found or check skipped by updater. Proceeding to login window directly.");
-                    // 'update-not-available' 이벤트 핸들러 내부의 proceedToLoginWindow() 호출에 의존하지 않고,
-                    // 여기서 직접 호출하여 로그인 창으로의 진행을 보장.
-                    // 단, 'update-not-available' 이벤트가 발생할 수도 있으므로 중복 호출 방지 고민 필요.
-                    // -> 가장 간단한 방법은 proceedToLoginWindow 함수 내에서 loginWindow가 이미 있는지 확인하는 것.
-                    proceedToLoginWindow();
-                }
-                // 'update-available' 이벤트는 해당 이벤트 핸들러에서 처리됨 (dialog 표시 등).
-            })
-            .catch(err => {
-                log.error('[AutoUpdater] Initial check for updates failed:', err);
-                dialog.showMessageBox({
-                    type: 'error', // 오류이므로 type을 error로
-                    title: '업데이트 확인 실패',
-                    message: `업데이트 서버에 연결 중 오류가 발생했습니다: ${err.message}\n\n오프라인으로 계속 진행합니다.`,
-                    buttons: ['확인']
-                }).then(() => {
-                    proceedToLoginWindow(); // 오류 발생 시에도 로그인 창으로 진행
-                });
+            splashWindow.once('closed', () => {
+                // 2. 스플래시 창이 완전히 닫힌 후 업데이트 확인 시작
+                log.info("Splash window officially closed. Now checking for updates.");
+                checkForInitialUpdates();
             });
+            splashWindow.close();
+        } else {
+            // 스플래시 창이 이미 없거나 존재하지 않았던 경우 바로 업데이트 확인
+            log.info("No splash window found or already closed. Checking for updates directly.");
+            checkForInitialUpdates();
+        }
     });
 
     ipcMain.on(IPC_CHANNELS.REQUEST_LOGIN_COMPLETE, () => {
