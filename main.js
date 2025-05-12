@@ -56,25 +56,35 @@ function registerAutoUpdaterEvents() {
         }
     });
 
-    autoUpdater.on('update-available', (info) => {
+     autoUpdater.on('update-available', (info) => {
         log.info('[AutoUpdater] Event: update-available:', info);
         if (updaterEventSender && !updaterEventSender.isDestroyed()) {
             updaterEventSender.send('autoUpdateNotification', 'update-available', info);
         }
-        if (!isDev && (process.platform === 'darwin' || !autoUpdater.autoDownload)) {
-            dialog.showMessageBox({  type: 'info',
+
+        // autoDownload가 false로 설정되었으므로, 항상 사용자에게 다운로드 여부를 묻습니다.
+        dialog.showMessageBox({
+            type: 'info',
             title: '업데이트 알림',
             message: `새로운 버전 ${info.version}이 있습니다.`,
-            detail: '지금 다운로드하고 설치 준비를 하시겠습니까?\n(앱은 다운로드 후 다시 시작해야 업데이트됩니다.)',
-            buttons: ['지금 다운로드', '나중에 알림'],
-            defaultId: 0, // 기본 선택 버튼
-            cancelId: 1   // 취소 버튼 (ESC 등) 
-            }).then(result => {
-                if (result.response === 0) autoUpdater.downloadUpdate();
-            });
-        }
+            detail: '지금 다운로드하시겠습니까?', // 메시지 간결화
+            buttons: ['예, 다운로드합니다', '아니요, 나중에'],
+            defaultId: 0,
+            cancelId: 1
+        }).then(result => {
+            if (result.response === 0) { // "예, 다운로드합니다"
+                log.info('[AutoUpdater] User chose to download the update.');
+                autoUpdater.downloadUpdate();
+            } else {
+                log.info('[AutoUpdater] User chose NOT to download now. Proceeding to login.');
+                proceedToLoginWindow(); // 사용자가 다운로드를 원치 않으면 로그인으로 진행
+            }
+        }).catch(err => {
+            log.error('[AutoUpdater] Error showing update-available dialog:', err);
+            proceedToLoginWindow();
+        });
     });
-
+    
     autoUpdater.on('update-not-available', (info) => {
         log.info('[AutoUpdater] Event: update-not-available.', info);
         if (updaterEventSender && !updaterEventSender.isDestroyed()) {
@@ -146,18 +156,17 @@ function configureAutoUpdater(allowPrereleaseSetting) {
     if (isDev) {
         autoUpdater.autoInstallOnAppQuit = false;
         autoUpdater.updateConfigPath = path.join(__dirname, 'dev-app-update.yml');
-        log.info(`[AutoUpdater] Dev mode: autoInstallOnAppQuit=false, updateConfigPath=${autoUpdater.updateConfigPath}`);
-    } else {
+        autoUpdater.autoDownload = false; // 개발 중에도 다운로드 여부 확인 용이하게
+        log.info(`[AutoUpdater] Dev mode: autoInstallOnAppQuit=false, autoDownload=false, updateConfigPath=${autoUpdater.updateConfigPath}`);
+    } else { // 프로덕션 환경
         autoUpdater.autoInstallOnAppQuit = true;
-        log.info('[AutoUpdater] Production mode: autoInstallOnAppQuit=true');
+        autoUpdater.autoDownload = false; // <<--- 프로덕션에서도 자동 다운로드 비활성화
+        log.info('[AutoUpdater] Production mode: autoInstallOnAppQuit=true, autoDownload=false');
     }
 
-    if (process.platform === 'darwin') {
-        autoUpdater.autoDownload = false;
-        log.info('[AutoUpdater] macOS: autoDownload=false');
-    } else {
-        autoUpdater.autoDownload = true;
-        log.info('[AutoUpdater] Other OS: autoDownload=true');
+    // macOS는 이미 위에서 false로 설정됨 (중복되지만 명시적으로 남겨둘 수 있음)
+    if (process.platform === 'darwin' && !autoUpdater.autoDownload) {
+        log.info('[AutoUpdater] macOS specific: autoDownload confirmed false.');
     }
 }
 
