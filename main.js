@@ -62,6 +62,11 @@ function registerAutoUpdaterEvents() {
             updaterEventSender.send('autoUpdateNotification', 'update-available', info);
         }
 
+        if (splashWindow && !splashWindow.isDestroyed()) {
+            log.info('[AutoUpdater] Hiding splash window to show error dialog.');
+            splashWindow.hide(); // Hide the splash window
+        }
+
         // autoDownload가 false로 설정되었으므로, 항상 사용자에게 다운로드 여부를 묻습니다.
         dialog.showMessageBox({
             type: 'info',
