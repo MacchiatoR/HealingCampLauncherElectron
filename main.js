@@ -33,7 +33,8 @@ const IPC_CHANNELS = {
 };
 
 const WINDOW_CONTROL = {
-    SWITCH_TO_MAIN_REQUEST: 'WINDOW_SWITCH_TO_MAIN_REQUEST' // 렌더러 -> 메인: 메인 창으로 전환 요청
+    SWITCH_TO_MAIN_REQUEST: 'WINDOW_SWITCH_TO_MAIN_REQUEST', // 렌더러 -> 메인: 메인 창으로 전환 요청
+    CLOSE_REQUEST: 'WINDOW_CONTROL_CLOSE_REQUEST'
 };
 
 // --- 전역 변수 ---
@@ -483,6 +484,18 @@ app.whenReady().then(async () => {
             setTimeout(() => { // 약간의 딜레이 후 닫기 (페이드아웃 시간 고려)
                  if (loginWindow && !loginWindow.isDestroyed()) loginWindow.close();
             }, 600); // CSS fadeOut 시간이 0.5s이므로 약간 더 길게
+        }
+    });
+
+    ipcMain.on(WINDOW_CONTROL.CLOSE_REQUEST, (event) => {
+        const webContents = event.sender;
+        const win = BrowserWindow.fromWebContents(webContents);
+
+        if (win && !win.isDestroyed()) {
+            log.info(`[IPC] Received ${WINDOW_CONTROL.CLOSE_REQUEST} from window ID ${win.id}. Closing it.`);
+            win.close(); // 요청을 보낸 창을 닫음
+        } else {
+            log.warn(`[IPC] Received ${WINDOW_CONTROL.CLOSE_REQUEST}, but could not find associated window or it was already destroyed.`);
         }
     });
 

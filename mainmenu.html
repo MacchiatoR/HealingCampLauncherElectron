@@ -224,22 +224,6 @@
         <!-- 장식 요소(별, 꽃)와 하단 페이지 표시기는 새 스케치에서 생략됨 -->
     </div>
 
-    <script>
-        // 커스텀 닫기 버튼 기능 (예시)
-        const closeBtn = document.getElementById('close-btn');
-        if (closeBtn && window.electronAPI && typeof window.electronAPI.requestCloseCurrentWindow === 'function') {
-            closeBtn.addEventListener('click', () => {
-                window.electronAPI.requestCloseCurrentWindow();
-            });
-        } else if(closeBtn) {
-            closeBtn.addEventListener('click', () => {
-                alert('닫기 기능이 연결되지 않았습니다. (preload 설정 필요)');
-            });
-        }
-
-        // document.getElementById('settingsButton').addEventListener('click', () => { /* 설정 화면 로직 */ });
-        // document.getElementById('logoutButton').addEventListener('click', () => { /* 로그아웃 로직 */ });
-        // document.getElementById('launchGameButton').addEventListener('click', () => { /* 게임 시작 로직 */ });
-    </script>
+    <script src="./js/mainmenu.js"></script>
 </body>
 </html>

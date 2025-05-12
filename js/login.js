@@ -1,20 +1,33 @@
 const loginOptionMicrosoft = document.getElementById('loginButton')
+const originalLoginButtonText = loginOptionMicrosoft.textContent;
+
 let loginOptionsViewOnLoginSuccess
 let loginOptionsViewOnLoginCancel
 
 loginOptionMicrosoft.onclick = (e) => {
     if (window.electronAPI && typeof window.electronAPI.sendMsftOpenLogin === 'function') {
-        console.info("성공")
+        
+        loginOptionMicrosoft.textContent = '로그인 창 여는 중...'; // 또는 '로그인 중...'
+        loginOptionMicrosoft.disabled = true; // 버튼 비활성화
+
         window.electronAPI.sendMsftOpenLogin(
             loginOptionsViewOnLoginSuccess,
             loginOptionsViewOnLoginCancel
         );
     } else {
         console.error('electronAPI.sendMsftOpenLogin is not available!');
+        resetButtonState();
     }
 };
 
 const { MSFT_REPLY_TYPE, MSFT_ERROR } = window.electronAPI?.CONSTANTS || {};
+
+function resetButtonState() {
+    if (loginOptionMicrosoft) {
+        loginOptionMicrosoft.textContent = originalLoginButtonText;
+        loginOptionMicrosoft.disabled = false; // 버튼 다시 활성화
+    }
+}
 
 // 메인 프로세스로부터 로그인 창 결과 수신
 if (window.electronAPI && typeof window.electronAPI.receiveLoginReply === 'function') {
@@ -27,6 +40,8 @@ if (window.electronAPI && typeof window.electronAPI.receiveLoginReply === 'funct
             const viewAfterError = targetView || loginOptionsViewOnLoginCancel; // main.js에서 보낸 targetView 우선 사용
 
             console.error('[LoginJS] Login Error Reply. Error Code/Object:', errorCodeOrErrorObject);
+            resetButtonState();
+
         } else if (replyType === MSFT_REPLY_TYPE.SUCCESS) {
             const queryMap = data;
             const viewOnSuccess = targetView || loginOptionsViewOnLoginSuccess; // main.js에서 보낸 targetView 우선 사용
@@ -35,11 +50,16 @@ if (window.electronAPI && typeof window.electronAPI.receiveLoginReply === 'funct
 
             if (!queryMap || !queryMap.code) {
                 console.error('[LoginJS] Auth code (queryMap.code) is missing in success reply!', queryMap);
+                resetButtonState();
                 return;
             }
 
             const authCode = queryMap.code;
             console.info(`AuthCode acquired: ${authCode}. Proceeding to process with AuthManager via main process...`);
+
+            if (loginOptionMicrosoft) {
+                 loginOptionMicrosoft.textContent = '계정 정보 확인 중...';
+            }
 
             // 메인 프로세스에 인증 코드 처리 요청
             if (window.electronAPI && typeof window.electronAPI.processAuthCode === 'function') {
@@ -76,18 +96,22 @@ if (window.electronAPI && typeof window.electronAPI.receiveLoginReply === 'funct
                                     // 현재 로그인 창은 main.js에서 닫힐 것입니다.
                                 } else {
                                     console.error('[LoginJS] electronAPI.requestSwitchToMainWindow is not available!');
+                                    resetButtonState();
                                 }
                             }, 500); // CSS fadeOut animation-duration (0.5s)
                         } else {
                             const displayableError = result.error; // { title: '...', desc: '...' } 형태 기대
                             console.error('Error from AuthManager (via main process):', displayableError);
+                            resetButtonState();
                         }
                     })
                     .catch(ipcError => {
                         console.error('IPC Error while calling electronAPI.processAuthCode:', ipcError);
+                        resetButtonState();
                     });
             } else {
                 console.error('[LoginJS] electronAPI.processAuthCode is not available! Check preload.js.');
+                resetButtonState();
                 alert('계정 처리 기능을 사용할 수 없습니다. (Preload 스크립트 오류)');
             }
         }
