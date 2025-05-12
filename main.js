@@ -48,6 +48,7 @@ let updaterEventSender = null; // 업데이트 알림을 보낼 렌더러의 eve
 
 function registerAutoUpdaterEvents() {
     log.info('[AutoUpdater] Registering global event listeners.');
+    // autoUpdater.removeAllListeners(); // 이 줄은 autoUpdater 객체에 해당 메소드가 없다면 에러 유발, 일단 주석 처리
 
     autoUpdater.on('checking-for-update', () => {
         log.info('[AutoUpdater] Event: checking-for-update');
@@ -56,28 +57,26 @@ function registerAutoUpdaterEvents() {
         }
     });
 
-     autoUpdater.on('update-available', (info) => {
+    autoUpdater.on('update-available', (info) => {
         log.info('[AutoUpdater] Event: update-available:', info);
         if (updaterEventSender && !updaterEventSender.isDestroyed()) {
             updaterEventSender.send('autoUpdateNotification', 'update-available', info);
         }
-
-        // autoDownload가 false로 설정되었으므로, 항상 사용자에게 다운로드 여부를 묻습니다.
         dialog.showMessageBox({
             type: 'info',
             title: '업데이트 알림',
-            message: `새로운 버전 ${info.version}이 있습니다.`,
-            detail: '지금 다운로드하시겠습니까?', // 메시지 간결화
-            buttons: ['예, 다운로드합니다', '아니요, 나중에'],
+            message: `새로운 버전 ${info.version}을(를) 다운로드할 수 있습니다.`,
+            detail: '지금 다운로드하고 설치 준비를 하시겠습니까? 앱은 다운로드 후 다시 시작해야 업데이트됩니다.',
+            buttons: ['지금 다운로드', '나중에'],
             defaultId: 0,
             cancelId: 1
         }).then(result => {
-            if (result.response === 0) { // "예, 다운로드합니다"
+            if (result.response === 0) {
                 log.info('[AutoUpdater] User chose to download the update.');
                 autoUpdater.downloadUpdate();
             } else {
-                log.info('[AutoUpdater] User chose NOT to download now. Proceeding to login.');
-                proceedToLoginWindow(); // 사용자가 다운로드를 원치 않으면 로그인으로 진행
+                log.info('[AutoUpdater] User chose to download later. Proceeding to login.');
+                proceedToLoginWindow();
             }
         }).catch(err => {
             log.error('[AutoUpdater] Error showing update-available dialog:', err);
@@ -90,8 +89,7 @@ function registerAutoUpdaterEvents() {
         if (updaterEventSender && !updaterEventSender.isDestroyed()) {
             updaterEventSender.send('autoUpdateNotification', 'update-not-available', info);
         }
-        // 이 이벤트는 업데이트 확인 후 로그인 창으로 진행하는 트리거로 사용될 수 있음
-        // (단, checkForUpdates() 호출 후의 로직에서 처리)
+        proceedToLoginWindow(); // 업데이트 없으면 로그인 창으로 진행
     });
 
     autoUpdater.on('error', (err) => {
@@ -104,7 +102,7 @@ function registerAutoUpdaterEvents() {
             title: '업데이트 오류',
             message: '업데이트 중 오류가 발생했습니다.',
             detail: `오류 내용: ${err.message}\n\n애플리케이션을 계속 사용하시겠습니까?`,
-            buttons: ['계속 사용', '앱 종료'],
+            buttons: ['계속 사용 (로그인 화면으로)', '앱 종료'],
             defaultId: 0,
             cancelId: 1
         }).then(result => {
@@ -115,14 +113,12 @@ function registerAutoUpdaterEvents() {
             }
         }).catch(dialogErr => {
             log.error('[AutoUpdater] Error showing error dialog:', dialogErr);
-            proceedToLoginWindow(); // 다이얼로그 오류 시에도 로그인 창으로 진행 (안전장치)
+            proceedToLoginWindow();
         });
-        // 이 이벤트도 로그인 창 진행 또는 앱 종료 결정 트리거로 사용될 수 있음
     });
 
     autoUpdater.on('download-progress', (progressObj) => {
         log.info(`[AutoUpdater] Event: download-progress - ${progressObj.percent}%`);
-        // 현재 활성화된 주요 창(loginWindow 또는 mainWindow)으로 진행률 전송
         const targetWindow = loginWindow || mainWindow;
         if (targetWindow && !targetWindow.isDestroyed()) {
              targetWindow.webContents.send('autoUpdateNotification', 'download-progress', progressObj);
@@ -134,108 +130,127 @@ function registerAutoUpdaterEvents() {
         if (updaterEventSender && !updaterEventSender.isDestroyed()) {
             updaterEventSender.send('autoUpdateNotification', 'update-downloaded', info);
         }
-        dialog.showMessageBox({ 
+        dialog.showMessageBox({
             type: 'info',
             title: '업데이트 다운로드 완료',
-            message: `새로운 버전 ${info.version}의 다운로드가 완료되었습니다.`,
+            message: `버전 ${info.version} 다운로드가 완료되었습니다.`,
             detail: '지금 설치하고 앱을 다시 시작하시겠습니까?',
-            buttons: ['지금 설치 및 재시작', '나중에 (앱 종료 시 자동 설치)'],
+            buttons: ['지금 설치 및 재시작', '나중에 (앱 종료 시 설치)'],
             defaultId: 0,
             cancelId: 1
         }).then(result => {
-            if (result.response === 0) autoUpdater.quitAndInstall();
+            if (result.response === 0) {
+                autoUpdater.quitAndInstall();
+            } else {
+                // "나중에 설치" 선택 시, autoInstallOnAppQuit=true면 앱 종료 시 자동 설치됨.
+                // 사용자가 업데이트를 연기했으므로 로그인 창으로 진행.
+                log.info('[AutoUpdater] User chose to install on quit. Proceeding to login for now.');
+                proceedToLoginWindow();
+            }
+        }).catch(err => {
+            log.error('[AutoUpdater] Error showing update-downloaded dialog:', err);
+            proceedToLoginWindow();
         });
     });
 }
 
 function configureAutoUpdater(allowPrereleaseSetting) {
     log.info(`[AutoUpdater] Configuring. Allow Prerelease: ${allowPrereleaseSetting}, isDev: ${isDev}`);
-
     autoUpdater.allowPrerelease = !!allowPrereleaseSetting;
 
     if (isDev) {
         autoUpdater.autoInstallOnAppQuit = false;
         autoUpdater.updateConfigPath = path.join(__dirname, 'dev-app-update.yml');
-        autoUpdater.autoDownload = false; // 개발 중에도 다운로드 여부 확인 용이하게
+        autoUpdater.autoDownload = false; // 개발 중에는 항상 다운로드 여부 확인
         log.info(`[AutoUpdater] Dev mode: autoInstallOnAppQuit=false, autoDownload=false, updateConfigPath=${autoUpdater.updateConfigPath}`);
-    } else { // 프로덕션 환경
-        autoUpdater.autoInstallOnAppQuit = true;
-        autoUpdater.autoDownload = false; // <<--- 프로덕션에서도 자동 다운로드 비활성화
+    } else {
+        autoUpdater.autoInstallOnAppQuit = true; // 프로덕션에서는 앱 종료 시 자동 설치
+        autoUpdater.autoDownload = false; // 프로덕션에서도 사용자에게 다운로드 여부 확인
         log.info('[AutoUpdater] Production mode: autoInstallOnAppQuit=true, autoDownload=false');
     }
-
-    // macOS는 이미 위에서 false로 설정됨 (중복되지만 명시적으로 남겨둘 수 있음)
-    if (process.platform === 'darwin' && !autoUpdater.autoDownload) {
-        log.info('[AutoUpdater] macOS specific: autoDownload confirmed false.');
-    }
+    // macOS는 autoDownload = false가 기본적으로 권장됨 (위 설정으로 커버됨)
 }
 
 function checkForInitialUpdates() {
+     log.info('[AutoUpdater] Starting initial check for updates.');
     autoUpdater.checkForUpdates()
+        .then(updateCheckResult => {
+            log.info('[AutoUpdater] Initial checkForUpdates() promise resolved. Result:', updateCheckResult);
+
+            let proceed = false;
+            if (isDev && !autoUpdater.forceDevUpdateConfig) { // 방법 1의 forceDevUpdateConfig가 설정되지 않았거나 효과 없을 때
+                // 개발 환경이고, dev-app-update.yml 강제 사용 설정이 안 되어 있다면
+                // "Skip checkForUpdates..." 메시지와 함께 이벤트가 발생 안 할 수 있음.
+                // 이 경우 updateCheckResult가 특정 값을 가질 수 있음 (예: null 또는 업데이트 확인 건너뜀 정보)
+                // 명시적으로 로그를 확인하고 해당 조건에 맞춰 로그인으로 진행.
+                // 예시: 만약 'Skip checkForUpdates...' 메시지가 항상 updateCheckResult.cancellationToken을 반환한다면
+                if (updateCheckResult && updateCheckResult.cancellationToken && updateCheckResult.cancellationToken.reason && updateCheckResult.cancellationToken.reason.includes('application is not packed')) {
+                    log.warn("[AutoUpdater] Update check skipped in dev (not packed, no force config). Proceeding to login.");
+                    proceed = true;
+                }
+            }
+            
+            // 일반적인 "업데이트 없음" 시나리오 (프로덕션 또는 forceDevUpdateConfig=true인 dev)
+            if (!proceed && (updateCheckResult === null ||
+                (updateCheckResult.updateInfo && updateCheckResult.updateInfo.version === app.getVersion()))) {
+                log.info("No new update found from checkForUpdates() direct result. Proceeding to login.");
+                proceed = true;
+            }
+
+            if (proceed) {
+                // 'update-not-available' 이벤트가 발생할 수도 있으므로,
+                // 바로 proceedToLoginWindow()를 호출하기보다, 해당 이벤트 핸들러에 맡기는 것이
+                // 로직 중복을 피하는 방법일 수 있습니다.
+                // 하지만 이벤트가 확실히 발생하지 않는다면 여기서 직접 호출해야 합니다.
+                // 안전하게는, 약간의 딜레이 후 loginWindow가 여전히 없다면 호출.
+                proceedToLoginWindow();
+            }
+            // 'update-available' 이벤트는 해당 핸들러에서 처리됨.
+        })
         .catch(err => {
             log.error('[AutoUpdater] Initial checkForUpdates() promise rejected:', err);
-            dialog.showMessageBox({
-                type: 'error',
-                title: '업데이트 확인 실패',
-                message: '업데이트 확인 중 오류가 발생했습니다.',
-                detail: `오류: ${err.message}\n\n로그인 화면으로 계속 진행합니다.`,
-                buttons: ['확인']
-            }).then(() => {
+            dialog.showMessageBox({ /* ... */ }).then(() => {
                 proceedToLoginWindow();
             });
         });
-    // .then() 블록은 제거. 결과 처리는 이벤트 핸들러에 맡김.
 }
 
 // --- 창 생성 함수들 ---
 function createSplashWindow() {
+    log.info('[WindowManager] Creating splash window...');
     splashWindow = new BrowserWindow({
-        width: 400,
-        height: 400,
-        transparent: true,
-        frame: false,
-        alwaysOnTop: true,
-        webPreferences: {
-            preload: path.join(__dirname, './js/preload.js')
-        }
+        width: 400, height: 400, transparent: true, frame: false, alwaysOnTop: true,
+        webPreferences: { preload: path.join(__dirname, './js/preload.js') }
     });
     splashWindow.loadFile(path.join(__dirname, 'splash.html'));
-    splashWindow.on('closed', () => { splashWindow = null; });
+    splashWindow.on('closed', () => {
+        log.info('[WindowManager] Splash window closed.');
+        splashWindow = null;
+    });
 }
 
 function createLoginWindow() {
     if (loginWindow && !loginWindow.isDestroyed()) {
+        log.info('[WindowManager] Login window already exists, focusing.');
         loginWindow.focus();
         return;
     }
+    log.info('[WindowManager] Creating login window...');
     loginWindow = new BrowserWindow({
-        width: 750,
-        height: 450, // 또는 login.html 디자인에 맞는 크기
-        frame: false,
-        show: false,
-        resizable: false,
+        width: 750, height: 450, frame: false, show: false, resizable: false,
         webPreferences: {
             preload: path.join(__dirname, '/js/preload.js'),
-            contextIsolation: true,
-            nodeIntegration: false,
+            contextIsolation: true, nodeIntegration: false,
         }
     });
-
     loginWindow.loadFile(path.join(__dirname, 'login.html'));
     loginWindow.once('ready-to-show', () => {
-        if (loginWindow) {
+        if (loginWindow && !loginWindow.isDestroyed()) {
             loginWindow.show();
-            log.info('[WindowManager] Login window shown, setting as updaterEventSender.');
-            updaterEventSender = loginWindow.webContents; // 로그인 창으로 알림 대상 설정
+            log.info('[WindowManager] Login window shown. Setting as updaterEventSender.');
+            updaterEventSender = loginWindow.webContents; // 로그인 창으로 알림 대상 업데이트
         }
     });
-    loginWindow.on('closed', () => {
-        log.info('[WindowManager] Login window closed.');
-        loginWindow = null;
-        // 로그인 창이 닫힐 때 updaterEventSender를 null로 할지, mainWindow로 할지 등 결정 필요
-        // if (updaterEventSender === loginWindow.webContents) updaterEventSender = null;
-    });
-    return loginWindow;
 }
 
 function createMainWindow() {
@@ -255,31 +270,30 @@ function createMainWindow() {
         }
     });
 
-    mainWindow.loadFile(path.join(__dirname, 'mainmenu.html')); // mainmenu.html 로드
-    // mainWindow.once('ready-to-show', () => { if (mainWindow) mainWindow.show(); }); // 여기서 바로 show 하지 않음
-    mainWindow.on('closed', () => {
-        mainWindow = null;
-        if (process.platform !== 'darwin') {
-            app.quit();
+    mainWindow.loadFile(path.join(__dirname, 'mainmenu.html'));
+    mainWindow.once('ready-to-show', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+            log.info('[WindowManager] Main window shown. Setting as updaterEventSender.');
+            updaterEventSender = mainWindow.webContents; // 메인 창으로 알림 대상 업데이트
         }
     });
-    // remoteMain.enable(mainWindow.webContents); // 메인 창에서 @electron/remote 사용 시
 }
 
 // 로그인 창으로 진행하는 함수
 function proceedToLoginWindow() {
-    log.info('Proceeding to login window (after splash close or update check).');
-    // 스플래시 창이 있다면 이미 닫혔거나 여기서 닫도록 보장
+    log.info('[WindowManager] Attempting to proceed to login window...');
     if (splashWindow && !splashWindow.isDestroyed()) {
-        log.warn('[WindowManager] Splash window was not closed before proceeding to login. Closing now.');
-        splashWindow.close(); // 확실히 닫기
+        log.info('[WindowManager] Closing splash window before proceeding to login.');
+        splashWindow.close();
     }
 
-    if (!loginWindow || loginWindow.isDestroyed()) {
-        createLoginWindow();
-    } else {
-        loginWindow.focus();
+    if ((loginWindow && !loginWindow.isDestroyed()) || (mainWindow && !mainWindow.isDestroyed())) {
+        log.warn('[WindowManager] Login or Main window might already exist. Focusing login if available.');
+        if (loginWindow && !loginWindow.isDestroyed()) loginWindow.focus();
+        return;
     }
+    createLoginWindow();
 }
 
 // --- 마이크로소프트 로그인
@@ -292,37 +306,27 @@ let msftAuthViewSuccess
 let msftAuthViewOnClose
 
 ipcMain.on('autoUpdateAction', (event, arg, data) => {
-    // updaterEventSender를 현재 요청을 보낸 창으로 업데이트 (중요)
-    if (event && event.sender) {
-        updaterEventSender = event.sender;
-    }
+    if (event && event.sender) updaterEventSender = event.sender;
     switch(arg){
-        case 'initAutoUpdater': // 렌더러에서 설정값(data=allowPrerelease)을 보내 초기화/재설정
+        case 'initAutoUpdater':
             log.info('[IPC] autoUpdateAction: initAutoUpdater (configure)');
-            configureAutoUpdater(data); // 설정만 변경
+            configureAutoUpdater(data);
             if(updaterEventSender && !updaterEventSender.isDestroyed()) {
-                updaterEventSender.send('autoUpdateNotification', 'ready'); // 설정 완료 알림
+                updaterEventSender.send('autoUpdateNotification', 'ready');
             }
             break;
-         case 'checkForUpdate':
+        case 'checkForUpdate':
             log.info('[IPC] autoUpdateAction: checkForUpdate');
-            autoUpdater.checkForUpdates()
-                .then(updateCheckResult => {
-                    // updateCheckResult를 사용하여 추가 작업 가능 (예: 업데이트 정보 로깅)
-                    // update-available 또는 update-not-available 이벤트가 발생함
-                    log.info('[AutoUpdater] checkForUpdates promise resolved:', updateCheckResult);
-                })
-                .catch(err => {
-                    log.error('[AutoUpdater] checkForUpdates promise rejected:', err);
-                    if (updaterEventSender && !updaterEventSender.isDestroyed()) {
-                        updaterEventSender.send('autoUpdateNotification', 'realerror', err);
-                    }
-                    // 로그인 창으로 진행하는 로직 추가 고려 (초기 실행이 아닐 경우)
-                });
+            autoUpdater.checkForUpdates().catch(err => {
+                log.error('[AutoUpdater] IPC checkForUpdates promise rejected:', err);
+                if (updaterEventSender && !updaterEventSender.isDestroyed()) {
+                    updaterEventSender.send('autoUpdateNotification', 'realerror', err);
+                }
+            });
             break;
         case 'allowPrereleaseChange':
             log.info(`[IPC] autoUpdateAction: allowPrereleaseChange to ${data}`);
-            autoUpdater.allowPrerelease = !!data; // 직접 설정 변경
+            autoUpdater.allowPrerelease = !!data;
             break;
         case 'installUpdateNow':
             log.info('[IPC] autoUpdateAction: installUpdateNow');
@@ -334,14 +338,14 @@ ipcMain.on('autoUpdateAction', (event, arg, data) => {
     }
 });
 
-ipcMain.on(MSFT_OPCODE.OPEN_LOGIN, (ipcEvent, ...arguments_) => {
+ipcMain.on(MSFT_OPCODE.OPEN_LOGIN, (ipcEvent, successViewTarget, cancelViewTarget) => {
     if (msftAuthWindow) {
         ipcEvent.reply(MSFT_OPCODE.REPLY_LOGIN, MSFT_REPLY_TYPE.ERROR, MSFT_ERROR.ALREADY_OPEN, msftAuthViewOnClose)
         return
     }
     msftAuthSuccess = false
-    msftAuthViewSuccess = arguments_[0]
-    msftAuthViewOnClose = arguments_[1]
+    msftAuthViewSuccess = successViewTarget;
+    msftAuthViewOnClose = cancelViewTarget;
     msftAuthWindow = new BrowserWindow({
         title: '마이크로소프트 로그인',
         backgroundColor: '#222222',
@@ -407,28 +411,23 @@ ipcMain.handle(MSFT_OPCODE.PROCESS_AUTH_CODE, async (event, authCode) => {
 
 // --- 앱 수명주기 이벤트 ---
 app.whenReady().then(async () => {
-    // 자동 업데이트 이벤트 핸들러 전역 등록 (앱 시작 시 한 번만)
-    registerAutoUpdaterEvents();
+    log.info('App is ready.');
+
+    registerAutoUpdaterEvents(); // 이벤트 리스너는 한 번만 등록
     const initialAllowPrerelease = ConfigManager.getAllowPrerelease ? ConfigManager.getAllowPrerelease() : false;
     configureAutoUpdater(initialAllowPrerelease); // 초기 설정 적용
 
-    // --- 초기 창 생성 ---
     createSplashWindow();
 
-    // --- 일반 창 전환 IPC 핸들러 ---
     ipcMain.on(IPC_CHANNELS.SPLASH_DONE, () => {
         log.info("Splash done. Closing splash and then checking for updates...");
-
-        // 1. 스플래시 창 닫기
         if (splashWindow && !splashWindow.isDestroyed()) {
             splashWindow.once('closed', () => {
-                // 2. 스플래시 창이 완전히 닫힌 후 업데이트 확인 시작
                 log.info("Splash window officially closed. Now checking for updates.");
                 checkForInitialUpdates();
             });
             splashWindow.close();
         } else {
-            // 스플래시 창이 이미 없거나 존재하지 않았던 경우 바로 업데이트 확인
             log.info("No splash window found or already closed. Checking for updates directly.");
             checkForInitialUpdates();
         }
