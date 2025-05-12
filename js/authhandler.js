@@ -30,6 +30,17 @@ exports.addMicrosoftAccount = async function(authCode) {
     return ret
 }
 
+exports.removeMicrosoftAccount = async function(uuid){
+    try {
+        ConfigManager.removeAuthAccount(uuid)
+        ConfigManager.save()
+        return Promise.resolve()
+    } catch (err){
+        log.error('Error while removing account', err)
+        return Promise.reject(err)
+    }
+}
+
 async function fullMicrosoftAuthFlow(entryCode, authMode) {
     try {
 

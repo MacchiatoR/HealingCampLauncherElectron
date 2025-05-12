@@ -126,6 +126,10 @@ exports.isLoaded = function(){
     return config != null;
 };
 
+exports.getSelectedAccount = function(){
+    return config.authenticationDatabase[config.selectedAccount]
+}
+
 exports.addMicrosoftAuthAccount = function(uuid, accessToken, name, mcExpires, msAccessToken, msRefreshToken, msExpires) {
     config.selectedAccount = uuid
     config.authenticationDatabase[uuid] = {
@@ -142,4 +146,21 @@ exports.addMicrosoftAuthAccount = function(uuid, accessToken, name, mcExpires, m
         }
     }
     return config.authenticationDatabase[uuid]
+}
+
+exports.removeAuthAccount = function(uuid){
+    if(config.authenticationDatabase[uuid] != null){
+        delete config.authenticationDatabase[uuid]
+        if(config.selectedAccount === uuid){
+            const keys = Object.keys(config.authenticationDatabase)
+            if(keys.length > 0){
+                config.selectedAccount = keys[0]
+            } else {
+                config.selectedAccount = null
+                config.clientToken = null
+            }
+        }
+        return true
+    }
+    return false
 }

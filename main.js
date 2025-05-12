@@ -26,7 +26,7 @@ if (process.env.NODE_ENV !== 'production') {
     // require('electron-reload')(__dirname); // 필요시 활성화
 }
 
-// --- 상수 및 설정 ---
+// --- 상수 및 전역 변수 ---
 const IPC_CHANNELS = {
     SPLASH_DONE: 'splash-done',
     REQUEST_LOGIN_COMPLETE: 'request-login-complete', // 일반 로그인 완료 후 메인 창 전환용
@@ -34,10 +34,10 @@ const IPC_CHANNELS = {
 
 const WINDOW_CONTROL = {
     SWITCH_TO_MAIN_REQUEST: 'WINDOW_SWITCH_TO_MAIN_REQUEST', // 렌더러 -> 메인: 메인 창으로 전환 요청
-    CLOSE_REQUEST: 'WINDOW_CONTROL_CLOSE_REQUEST'
+    SWITCH_TO_LOGIN_REQUEST: 'WINDOW_SWITCH_TO_LOGIN_REQUEST',
+    CLOSE_REQUEST: 'WINDOW_CONTROL_CLOSE_REQUEST',
 };
 
-// --- 전역 변수 ---
 let splashWindow;
 let loginWindow;
 let mainWindow;
@@ -223,96 +223,6 @@ function checkForInitialUpdates() {
         });
 }
 
-// --- 창 생성 함수들 ---
-function createSplashWindow() {
-    log.info('[WindowManager] Creating splash window...');
-    splashWindow = new BrowserWindow({
-        width: 400, height: 400, transparent: true, frame: false, alwaysOnTop: true,
-        webPreferences: { preload: path.join(__dirname, './js/preload.js') }
-    });
-    splashWindow.loadFile(path.join(__dirname, 'splash.html'));
-    splashWindow.on('closed', () => {
-        log.info('[WindowManager] Splash window closed.');
-        splashWindow = null;
-    });
-}
-
-function createLoginWindow() {
-    if (loginWindow && !loginWindow.isDestroyed()) {
-        log.info('[WindowManager] Login window already exists, focusing.');
-        loginWindow.focus();
-        return;
-    }
-    log.info('[WindowManager] Creating login window...');
-    loginWindow = new BrowserWindow({
-        width: 750, height: 450, frame: false, show: false, resizable: false,
-        webPreferences: {
-            preload: path.join(__dirname, '/js/preload.js'),
-            contextIsolation: true, nodeIntegration: false,
-        }
-    });
-    loginWindow.loadFile(path.join(__dirname, 'login.html'));
-    loginWindow.once('ready-to-show', () => {
-        if (loginWindow && !loginWindow.isDestroyed()) {
-            loginWindow.show();
-            log.info('[WindowManager] Login window shown. Setting as updaterEventSender.');
-            updaterEventSender = loginWindow.webContents; // 로그인 창으로 알림 대상 업데이트
-        }
-    });
-}
-
-function createMainWindow() {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.focus();
-        return;
-    }
-    mainWindow = new BrowserWindow({
-        width: 1280, // 요청하신 크기
-        height: 720, // 요청하신 크기
-        show: false, // <<--- 초기에는 숨김
-        frame: false, // 기본 프레임 사용 (또는 false로 하고 커스텀 타이틀바)
-        webPreferences: {
-            preload: path.join(__dirname, 'js', 'preload.js'), // 메인 창에도 preload가 필요하면 설정
-            contextIsolation: true,
-            nodeIntegration: false,
-        }
-    });
-
-    mainWindow.loadFile(path.join(__dirname, 'mainmenu.html'));
-    mainWindow.once('ready-to-show', () => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.show();
-            log.info('[WindowManager] Main window shown. Setting as updaterEventSender.');
-            updaterEventSender = mainWindow.webContents; // 메인 창으로 알림 대상 업데이트
-        }
-    });
-}
-
-// 로그인 창으로 진행하는 함수
-function proceedToLoginWindow() {
-    log.info('[WindowManager] Attempting to proceed to login window...');
-    if (splashWindow && !splashWindow.isDestroyed()) {
-        log.info('[WindowManager] Closing splash window before proceeding to login.');
-        splashWindow.close();
-    }
-
-    if ((loginWindow && !loginWindow.isDestroyed()) || (mainWindow && !mainWindow.isDestroyed())) {
-        log.warn('[WindowManager] Login or Main window might already exist. Focusing login if available.');
-        if (loginWindow && !loginWindow.isDestroyed()) loginWindow.focus();
-        return;
-    }
-    createLoginWindow();
-}
-
-// --- 마이크로소프트 로그인
-const REDIRECT_URI_PREFIX = 'https://login.microsoftonline.com/common/oauth2/nativeclient?'
-const { AZURE_CLIENT_ID, MSFT_OPCODE, MSFT_REPLY_TYPE, MSFT_ERROR, SHELL_OPCODE } = require('./js/ipc')
-
-let msftAuthWindow
-let msftAuthSuccess
-let msftAuthViewSuccess
-let msftAuthViewOnClose
-
 ipcMain.on('autoUpdateAction', (event, arg, data) => {
     if (event && event.sender) updaterEventSender = event.sender;
     switch(arg){
@@ -345,6 +255,113 @@ ipcMain.on('autoUpdateAction', (event, arg, data) => {
             break;
     }
 });
+
+// --- 창 생성 함수들 ---
+function createSplashWindow() {
+    log.info('[WindowManager] Creating splash window...');
+    splashWindow = new BrowserWindow({
+        width: 400, height: 400, transparent: true, frame: false, alwaysOnTop: true,
+        webPreferences: { preload: path.join(__dirname, './js/preload.js') }
+    });
+    splashWindow.loadFile(path.join(__dirname, 'splash.html'));
+    splashWindow.on('closed', () => {
+        log.info('[WindowManager] Splash window closed.');
+        splashWindow = null;
+    });
+}
+
+function createLoginWindow() {
+    if (loginWindow && !loginWindow.isDestroyed()) {
+        log.info('[WindowManager] Login window already exists, focusing.');
+        loginWindow.focus();
+        return;
+    }
+    log.info('[WindowManager] Creating login window...');
+    loginWindow = new BrowserWindow({
+        width: 750, height: 450, frame: false, show: false, resizable: false,
+        webPreferences: {
+            preload: path.join(__dirname, '/js/preload.js'),
+            contextIsolation: true, nodeIntegration: false,
+        }
+    });
+    remoteMain.enable(loginWindow.webContents); // loginWindow에서도 remote 사용 가능하도록
+    loginWindow.loadFile(path.join(__dirname, 'login.html'));
+    loginWindow.once('ready-to-show', () => {
+        if (loginWindow && !loginWindow.isDestroyed()) {
+            loginWindow.show();
+            log.info('[WindowManager] Login window shown.');
+            // updaterEventSender = loginWindow.webContents; // 필요시 주석 해제
+        }
+    });
+    loginWindow.on('closed', () => {
+        log.info('[WindowManager] Login window closed.');
+        loginWindow = null;
+    });
+}
+
+function createMainWindow() {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        log.info('[WindowManager] Main window already exists, focusing.');
+        mainWindow.focus();
+        return;
+    }
+    log.info('[WindowManager] Creating main window...');
+    mainWindow = new BrowserWindow({
+        width: 1280, height: 720, show: false, frame: false,
+        webPreferences: {
+            preload: path.join(__dirname, 'js', 'preload.js'),
+            contextIsolation: true, nodeIntegration: false,
+        }
+    });
+    remoteMain.enable(mainWindow.webContents); // mainWindow에서도 remote 사용 가능하도록
+    mainWindow.loadFile(path.join(__dirname, 'mainmenu.html'));
+    mainWindow.once('ready-to-show', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+            log.info('[WindowManager] Main window shown.');
+            // updaterEventSender = mainWindow.webContents; // 필요시 주석 해제
+        }
+    });
+    mainWindow.on('closed', () => {
+        log.info('[WindowManager] Main window closed.');
+        mainWindow = null;
+        // macOS가 아닌 경우, 메인 창이 닫히면 앱 종료 (기본 동작)
+        // if (process.platform !== 'darwin') {
+        //     app.quit();
+        // }
+    });
+}
+
+// 로그인 창으로 진행하는 함수
+function proceedToLoginWindow() {
+    log.info('[WindowManager] Attempting to proceed to login window...');
+    if (splashWindow && !splashWindow.isDestroyed()) {
+        log.info('[WindowManager] Closing splash window before proceeding to login.');
+        splashWindow.close(); // splashWindow = null; 은 'closed' 이벤트에서 처리
+    }
+
+    // 메인 창이 열려있다면 닫아야 로그인 창으로 "돌아갈" 수 있음
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        log.info('[WindowManager] Closing main window before proceeding to login.');
+        mainWindow.close(); // mainWindow = null; 은 'closed' 이벤트에서 처리
+    }
+
+    if (loginWindow && !loginWindow.isDestroyed()) {
+        log.warn('[WindowManager] Login window might already exist. Focusing login.');
+        loginWindow.focus();
+        return;
+    }
+    createLoginWindow();
+}
+
+// --- 마이크로소프트 로그인
+const REDIRECT_URI_PREFIX = 'https://login.microsoftonline.com/common/oauth2/nativeclient?'
+const { AZURE_CLIENT_ID, MSFT_OPCODE, MSFT_REPLY_TYPE, MSFT_ERROR, SHELL_OPCODE } = require('./js/ipc')
+
+let msftAuthWindow
+let msftAuthSuccess
+let msftAuthViewSuccess
+let msftAuthViewOnClose
 
 ipcMain.on(MSFT_OPCODE.OPEN_LOGIN, (ipcEvent, successViewTarget, cancelViewTarget) => {
     if (msftAuthWindow) {
@@ -417,6 +434,116 @@ ipcMain.handle(MSFT_OPCODE.PROCESS_AUTH_CODE, async (event, authCode) => {
     }
 });
 
+// --- 마이크로소프트 로그아웃
+let msftLogoutWindow
+let msftLogoutSuccess
+let msftLogoutSuccessSent
+
+ipcMain.on(MSFT_OPCODE.OPEN_LOGOUT, async (ipcEvent, uuid) => {
+    log.info(`[IPC MSFT_OPCODE.OPEN_LOGOUT] Received for UUID: ${uuid}`);
+    if (msftLogoutWindow) {
+        log.warn('[IPC MSFT_OPCODE.OPEN_LOGOUT] Logout window already open.');
+        ipcEvent.reply(MSFT_OPCODE.REPLY_LOGOUT, MSFT_REPLY_TYPE.ERROR, MSFT_ERROR.ALREADY_OPEN);
+        return;
+    }
+
+    msftLogoutSuccess = false;
+    msftLogoutSuccessSent = false; // 응답 중복 전송 방지 플래그
+
+    msftLogoutWindow = new BrowserWindow({
+        title: '마이크로소프트 로그아웃',
+        backgroundColor: '#222222',
+        width: 520,
+        height: 600,
+        frame: true,
+        icon: './assets/icon.png'
+    })
+
+    msftLogoutWindow.on('closed', () => {
+        log.info('[MSFT Logout Window] Closed.');
+        msftLogoutWindow = undefined;
+        // 여기서 응답을 보내는 것은 사용자가 창을 닫았을 때 (성공/실패 판단 후)
+        if (!msftLogoutSuccessSent) { // 성공 응답이 이미 보내지지 않았다면
+             log.info('[MSFT Logout Window] Sending NOT_FINISHED reply as window closed before success confirmed.');
+            if (!ipcEvent.sender.isDestroyed()){
+                ipcEvent.reply(MSFT_OPCODE.REPLY_LOGOUT, MSFT_REPLY_TYPE.ERROR, MSFT_ERROR.NOT_FINISHED);
+            }
+        }
+    });
+
+    msftLogoutWindow.webContents.on('did-navigate', async (event, uri) => { // async 추가
+        log.info('[MSFT Logout Window] Navigated to:', uri);
+        if (uri.startsWith('https://login.microsoftonline.com/common/oauth2/v2.0/logoutsession') ||
+            uri.includes('logoutsession') ||
+            uri.includes('signed_out=1')) {
+
+            log.info('[MSFT Logout Window] Logout success condition met via navigation.');
+            msftLogoutSuccess = true;
+
+            if (!msftLogoutSuccessSent) {
+                msftLogoutSuccessSent = true;
+                log.info('[MSFT Logout Window] Sending SUCCESS reply to renderer.');
+                if (!ipcEvent.sender.isDestroyed()) {
+                    // isLastAccount 파라미터 없이 성공 메시지 전송
+                    ipcEvent.reply(MSFT_OPCODE.REPLY_LOGOUT, MSFT_REPLY_TYPE.SUCCESS, uuid);
+                }
+
+                // <<<--- 계정 제거 및 화면 전환 로직 ---
+                try {
+                    log.info(`[MSFT Logout Window] Attempting to remove account ${uuid} from AuthManager.`);
+                    await AuthManager.removeMicrosoftAccount(uuid);
+                    log.info(`[AuthManager] Account ${uuid} removed after MS logout.`);
+
+                    const currentSelectedAccount = ConfigManager.getSelectedAccount();
+                    if (currentSelectedAccount && currentSelectedAccount.uuid === uuid) {
+                        ConfigManager.clearSelectedAccount();
+                        log.info(`[ConfigManager] Cleared selected account: ${uuid}`);
+                    }
+                    await ConfigManager.save();
+                    log.info(`[ConfigManager] Config saved after account removal.`);
+
+                    log.info('[MSFT Logout Window] Logout successful for account. Proceeding to login window unconditionally.');
+                    if (msftLogoutWindow && !msftLogoutWindow.isDestroyed()) {
+                        log.info('[MSFT Logout Window] Closing logout window before switching to login.');
+                        msftLogoutWindow.close();
+                        msftLogoutWindow = null;
+                    }
+                    proceedToLoginWindow(); // 무조건 로그인 창으로 전환
+
+                } catch (error) {
+                    log.error('[MSFT Logout Window] Error removing account or switching window after logout:', error);
+                    if (msftLogoutWindow && !msftLogoutWindow.isDestroyed()) msftLogoutWindow.close();
+                    // 오류 발생 시에도 로그인 창으로 가는 것을 고려할 수 있음 (선택적)
+                    // proceedToLoginWindow();
+                }
+                // --- 계정 제거 및 화면 전환 로직 끝 ---
+            } else {
+                if (msftLogoutWindow && !msftLogoutWindow.isDestroyed()) {
+                    log.info('[MSFT Logout Window] SUCCESS reply already sent or different logic path. Closing logout window.');
+                    msftLogoutWindow.close();
+                    msftLogoutWindow = null;
+                }
+            }
+        }
+    });
+
+    msftLogoutWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+        log.error(`[MSFT Logout Window] Failed to load URL: ${validatedURL}. Error: ${errorCode}, ${errorDescription}`);
+        // 로드 실패 시 에러 처리 (예: 네트워크 문제)
+        if (!msftLogoutSuccessSent) {
+            msftLogoutSuccessSent = true; // 실패 응답도 한 번만
+             log.info('[MSFT Logout Window] Sending ERROR reply due to load failure.');
+            if (!ipcEvent.sender.isDestroyed()){
+                ipcEvent.reply(MSFT_OPCODE.REPLY_LOGOUT, MSFT_REPLY_TYPE.ERROR, 'LOAD_FAILED', errorDescription);
+            }
+        }
+        if (msftLogoutWindow && !msftLogoutWindow.isDestroyed()) msftLogoutWindow.close();
+    });
+
+    msftLogoutWindow.removeMenu()
+    msftLogoutWindow.loadURL('https://login.microsoftonline.com/common/oauth2/v2.0/logout')
+});
+
 // --- 앱 수명주기 이벤트 ---
 app.whenReady().then(async () => {
     log.info('App is ready.');
@@ -441,50 +568,28 @@ app.whenReady().then(async () => {
         }
     });
 
-    ipcMain.on(IPC_CHANNELS.REQUEST_LOGIN_COMPLETE, () => {
-        log.info("Login complete signal received (non-MSFT), closing login window and opening main window.");
-        if (loginWindow && !loginWindow.isDestroyed()) {
-            loginWindow.close();
-        }
-        if (!mainWindow) {
-            createMainWindow();
-        }
+     ipcMain.on(IPC_CHANNELS.REQUEST_LOGIN_COMPLETE, () => {
+        log.info("Login complete signal received, closing login and opening main.");
+        if (loginWindow && !loginWindow.isDestroyed()) loginWindow.close();
+        if (!mainWindow) createMainWindow();
+        else if (mainWindow.isDestroyed()) createMainWindow(); // 만약 파괴되었다면 다시 생성
+        else mainWindow.focus(); // 이미 있다면 포커스
     });
 
     ipcMain.on(WINDOW_CONTROL.SWITCH_TO_MAIN_REQUEST, () => {
         log.info('Switch to main window requested.');
-        if (loginWindow && !loginWindow.isDestroyed()) {
-            // loginWindow는 렌더러의 fade-out 애니메이션 후 닫히도록 할 수도 있고,
-            // 여기서 바로 닫아도 됩니다. 렌더러에서 fade-out 후 닫는 것이 더 자연스러울 수 있습니다.
-            // 여기서는 일단 닫는 로직만 둡니다. 렌더러에서 fade-out 후 close 신호를 보낼 수도 있습니다.
-            // 좀 더 부드러운 전환을 위해, 렌더러가 fade-out 애니메이션을 완료할 시간을 줍니다.
-            // loginWindow.close(); // 바로 닫기
-            // 더 나은 방법: loginWindow는 렌더러의 fadeOut 완료 후 스스로 닫도록 하고, 여기서는 mainWindow만 처리
-            log.info('Closing login window (if open) and creating/showing main window.');
-        }
-
+        if (loginWindow && !loginWindow.isDestroyed()) loginWindow.close();
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.show();
             mainWindow.focus();
         } else {
-            createMainWindow(); // mainWindow가 없으면 생성
-            // mainWindow가 생성되고 ready-to-show 이벤트 발생 후 show
-            if (mainWindow) {
-                mainWindow.once('ready-to-show', () => {
-                    if (mainWindow) {
-                        mainWindow.show();
-                        // mainWindow.webContents.openDevTools(); // 디버깅용
-                    }
-                });
-            }
+            createMainWindow();
         }
-        // 로그인 창이 여전히 떠있다면 닫아줍니다.
-        // (login.js에서 fade-out 후 스스로 닫는 로직이 있다면 이 부분은 필요 없을 수 있음)
-        if (loginWindow && !loginWindow.isDestroyed()) {
-            setTimeout(() => { // 약간의 딜레이 후 닫기 (페이드아웃 시간 고려)
-                 if (loginWindow && !loginWindow.isDestroyed()) loginWindow.close();
-            }, 600); // CSS fadeOut 시간이 0.5s이므로 약간 더 길게
-        }
+    });
+
+    ipcMain.on(WINDOW_CONTROL.SWITCH_TO_LOGIN_REQUEST, () => {
+        log.info('[IPC] Received request to switch to login window.');
+        proceedToLoginWindow(); // 메인 창 닫고 로그인 창 생성/표시
     });
 
     ipcMain.on(WINDOW_CONTROL.CLOSE_REQUEST, (event) => {
@@ -498,6 +603,47 @@ app.whenReady().then(async () => {
             log.warn(`[IPC] Received ${WINDOW_CONTROL.CLOSE_REQUEST}, but could not find associated window or it was already destroyed.`);
         }
     });
+
+    ipcMain.handle('auth:removeMicrosoftAccount', async (event, uuid) => {
+        log.info(`[IPC auth:removeMicrosoftAccount] Received for UUID: ${uuid}`);
+        try {
+            await AuthManager.removeMicrosoftAccount(uuid);
+            log.info(`[AuthManager] Account ${uuid} removed successfully.`);
+
+            // 선택된 계정 정보 업데이트 (만약 제거된 계정이 선택된 계정이었다면)
+            const currentSelectedAccount = ConfigManager.getSelectedAccount();
+            if (currentSelectedAccount && currentSelectedAccount.uuid === uuid) {
+                ConfigManager.clearSelectedAccount(); // 선택된 계정 정보 제거
+                log.info(`[ConfigManager] Cleared selected account as it was removed: ${uuid}`);
+                // 다른 계정이 있다면 첫 번째 계정을 선택하거나, 선택 없음을 유지
+                const remainingAccounts = AuthManager.getAccounts();
+                if (remainingAccounts.length > 0) {
+                    ConfigManager.setSelectedAccount(remainingAccounts[0].uuid);
+                    log.info(`[ConfigManager] Automatically selected new account: ${remainingAccounts[0].uuid}`);
+                }
+            }
+            await ConfigManager.save(); // 변경사항 저장
+
+            return { success: true };
+        } catch (error) {
+            log.error(`[AuthManager] Error removing account ${uuid}:`, error);
+            return { success: false, error: error.message || 'Failed to remove account' };
+        }
+    });
+    
+    ipcMain.handle('config:getSelectedAccount', async () => {
+        log.info('[IPC] Handling config:getSelectedAccount');
+        try {
+            // ConfigManager.load(); // 필요하다면 로드 보장
+            const account = ConfigManager.getSelectedAccount(); // ConfigManager에서 함수 호출
+            return account;
+        } catch (error) {
+            log.error('[IPC] Error in config:getSelectedAccount:', error);
+            return null; // 오류 발생 시 null 반환 또는 에러 객체 반환
+        }
+    }
+);
+    
 
     // --- macOS 활성화 처리 ---
     app.on('activate', function () {
