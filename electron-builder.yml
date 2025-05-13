@@ -15,6 +15,7 @@ extraResources:
 
 # Windows Configuration
 win: 
+  icon: 'assets/icon.ico'
   target: 
     - target: 'nsis'
       arch: 'x64'
@@ -28,6 +29,7 @@ nsis:
 
 # macOS Configuration
 mac:
+  icon: 'assets/icon.ico'
   target:
     - target: 'dmg'
       arch:
