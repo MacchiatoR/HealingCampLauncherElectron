@@ -273,21 +273,30 @@ function createLoginWindow() {
     }
     log.info('[WindowManager] Creating login window...');
     loginWindow = new BrowserWindow({
-        width: 750, height: 450, frame: false, show: false, resizable: false,
+        width: 750,
+        height: 450,
+        frame: false,
+        show: false,
+        resizable: false,      // 이미 설정되어 있음 (크기 조절 불가)
+        maximizable: false,    // <<--- 추가: 최대화 불가
+        // alwaysOnTop 속성은 이전 요청에 따라 제거됨
         webPreferences: {
             preload: path.join(__dirname, '/js/preload.js'),
-            contextIsolation: true, nodeIntegration: false,
+            contextIsolation: true,
+            nodeIntegration: false,
         }
     });
-    remoteMain.enable(loginWindow.webContents); // loginWindow에서도 remote 사용 가능하도록
+    remoteMain.enable(loginWindow.webContents);
     loginWindow.loadFile(path.join(__dirname, 'login.html'));
+
     loginWindow.once('ready-to-show', () => {
         if (loginWindow && !loginWindow.isDestroyed()) {
             loginWindow.show();
-            log.info('[WindowManager] Login window shown.');
-            // updaterEventSender = loginWindow.webContents; // 필요시 주석 해제
+            loginWindow.focus();
+            log.info('[WindowManager] Login window shown and focused.');
         }
     });
+
     loginWindow.on('closed', () => {
         log.info('[WindowManager] Login window closed.');
         loginWindow = null;
@@ -302,28 +311,33 @@ function createMainWindow() {
     }
     log.info('[WindowManager] Creating main window...');
     mainWindow = new BrowserWindow({
-        width: 1280, height: 720, show: false, frame: false,
+        width: 1280,
+        height: 720,
+        show: false,
+        frame: false,
+        resizable: false,      // <<--- 추가: 크기 조절 불가
+        maximizable: false,    // <<--- 추가: 최대화 불가
+        // alwaysOnTop 속성은 이전 요청에 따라 제거됨
         webPreferences: {
             preload: path.join(__dirname, 'js', 'preload.js'),
-            contextIsolation: true, nodeIntegration: false,
+            contextIsolation: true,
+            nodeIntegration: false,
         }
     });
-    remoteMain.enable(mainWindow.webContents); // mainWindow에서도 remote 사용 가능하도록
+    remoteMain.enable(mainWindow.webContents);
     mainWindow.loadFile(path.join(__dirname, 'mainmenu.html'));
+
     mainWindow.once('ready-to-show', () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.show();
-            log.info('[WindowManager] Main window shown.');
-            // updaterEventSender = mainWindow.webContents; // 필요시 주석 해제
+            mainWindow.focus();
+            log.info('[WindowManager] Main window shown and focused.');
         }
     });
+
     mainWindow.on('closed', () => {
         log.info('[WindowManager] Main window closed.');
         mainWindow = null;
-        // macOS가 아닌 경우, 메인 창이 닫히면 앱 종료 (기본 동작)
-        // if (process.platform !== 'darwin') {
-        //     app.quit();
-        // }
     });
 }
 
