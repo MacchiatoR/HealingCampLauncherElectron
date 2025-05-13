@@ -127,6 +127,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     getLauncherSettings: () => ipcRenderer.invoke('settings:get-all'),
     saveLauncherSettings: (settings) => ipcRenderer.invoke('settings:save-all', settings),
+
+    // 진행률 업데이트 수신을 위한 리스너 등록 함수
+    onLaunchProgressStart: (callback) => ipcRenderer.on('launch-progress-start', (_event, data) => callback(data)),
+    onLaunchProgressUpdate: (callback) => ipcRenderer.on('launch-progress-update', (_event, data) => callback(data)),
+    onLaunchProgressComplete: (callback) => ipcRenderer.on('launch-progress-complete', (_event, data) => callback(data)),
+    // 리스너 제거 함수 (컴포넌트 unmount 시 호출)
+    removeLaunchProgressListeners: () => {
+        ipcRenderer.removeAllListeners('launch-progress-start');
+        ipcRenderer.removeAllListeners('launch-progress-update');
+        ipcRenderer.removeAllListeners('launch-progress-complete');
+    }
 });
 
 console.log('[Preload] electronAPI has been exposed to the window object.');

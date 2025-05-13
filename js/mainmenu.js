@@ -19,8 +19,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeBtn = document.getElementById('close-btn');
     const settingsViewPlaceholder = document.getElementById('settings-view-placeholder');
     const overlay = document.querySelector('.overlay');
-
     const FADE_DURATION = 300;
+
+    // --- 진행률 모달 DOM 요소 ---
+    const progressModalOverlay = document.getElementById('progress-modal-overlay');
+    const progressModalTitle = document.getElementById('progress-modal-title');
+    const progressModalMessage = document.getElementById('progress-modal-message');
+    const progressBar = document.getElementById('progress-bar');
+    const progressModalDetails = document.getElementById('progress-modal-details');
 
     // --- 창 닫기 버튼 이벤트 ---
     if (closeBtn) {
@@ -92,34 +98,161 @@ document.addEventListener('DOMContentLoaded', () => {
         console.error("[MainMenuJS] Critical error: electronAPI.receiveLogoutReply not available.");
     }
 
+    // --- 모달 관리 ---
+    let titleAnimationInterval = null; // 타이틀 애니메이션 인터벌 ID
+    let closeModalCountdownInterval = null; // 모달 닫기 카운트다운 인터벌 ID
+
+    function stopTitleAnimation() {
+        if (titleAnimationInterval) {
+            clearInterval(titleAnimationInterval);
+            titleAnimationInterval = null;
+        }
+    }
+
+    function startTitleAnimation(baseTitle = "게임 실행 준비") {
+        stopTitleAnimation(); // 기존 애니메이션 중지
+        let dots = 0;
+        const maxDots = 3;
+        if (progressModalTitle) {
+            progressModalTitle.textContent = baseTitle; // 초기 텍스트 (점 없음)
+            titleAnimationInterval = setInterval(() => {
+                dots = (dots + 1) % (maxDots + 1); // 0, 1, 2, 3 반복 (0은 점 없음)
+                let animatedTitle = baseTitle;
+                for (let i = 0; i < dots; i++) {
+                    animatedTitle += ".";
+                }
+                progressModalTitle.textContent = animatedTitle;
+            }, 1000); // 0.5초마다 점 변경
+        }
+    }
+
+    function showProgressModal(show = true) {
+        if (progressModalOverlay) {
+            if (show) {
+                progressModalOverlay.classList.add('visible');
+            } else {
+                progressModalOverlay.classList.remove('visible');
+                stopTitleAnimation();
+                if (closeModalCountdownInterval) { // 카운트다운 중지
+                    clearInterval(closeModalCountdownInterval);
+                    closeModalCountdownInterval = null;
+                }
+            }
+        }
+    }
+
+    function updateProgressModal({ title, message, progress, details, isError = false, isWarning = false }) {
+        // ... (이전 updateProgressModal 로직과 거의 동일, 오류 시 타이틀 변경 부분은 onLaunchProgressComplete에서 처리 가능)
+        if (progressModalMessage && message) progressModalMessage.textContent = message;
+        if (progressBar && typeof progress === 'number') {
+            progressBar.style.width = `${Math.max(0, Math.min(100, progress))}%`;
+            if (isError) {
+                progressBar.style.backgroundColor = 'var(--text-primary)';
+                // stopTitleAnimation(); // 애니메이션 중지는 showProgressModal(false) 또는 complete 핸들러에서
+            } else if (isWarning) {
+                progressBar.style.backgroundColor = 'orange';
+            } else {
+                progressBar.style.backgroundColor = 'var(--launch-button-bg)';
+            }
+        }
+        if (progressModalDetails && details !== undefined) { // details가 명시적으로 제공될 때만 업데이트
+            progressModalDetails.textContent = details;
+        }
+    }
+
+
     // --- 게임 실행 버튼 이벤트 ---
     if (launchGameButton) {
         launchGameButton.addEventListener('click', async () => {
-            console.log('[MainMenuJS] Launch game button clicked.');
-            if (!electronAPI || typeof electronAPI.launchMinecraft !== 'function') {
-                alert('게임 실행 기능을 사용할 수 없습니다. (API 누락)');
-                return;
-            }
+            // ... (리스너 등록 및 실행 요청 부분은 이전과 동일) ...
+            console.log('[MainMenuJS] Launch game button clicked, invoking main process.');
             launchGameButton.disabled = true;
-            launchGameButton.textContent = '게임 실행 중...';
-            try {
-                const result = await electronAPI.launchMinecraft();
-                if (result && result.success) {
-                    console.log('[MainMenuJS] Game launch successful:', result.message);
+            launchGameButton.textContent = '실행 준비 중...';
+
+            window.electronAPI.removeLaunchProgressListeners();
+
+            window.electronAPI.onLaunchProgressStart((data) => {
+                console.log('[MainMenuJS] IPC launch-progress-start:', data);
+                if (closeModalCountdownInterval) clearInterval(closeModalCountdownInterval); // 이전 카운트다운 중지
+                startTitleAnimation(data.title || "게임 실행 준비");
+                updateProgressModal({ message: '초기화 중...', progress: 0, details: '' }); // 상세 정보 초기화
+                showProgressModal(true);
+            });
+
+            window.electronAPI.onLaunchProgressUpdate((data) => {
+                console.log('[MainMenuJS] IPC launch-progress-update:', data);
+                updateProgressModal(data);
+            });
+
+            window.electronAPI.onLaunchProgressComplete(async (data) => {
+                console.log('[MainMenuJS] IPC launch-progress-complete:', data);
+                stopTitleAnimation();
+                updateProgressModal(data); // 최종 메시지 (성공 또는 실패 메시지)
+
+                if (data.success) {
+                    if (progressModalTitle) progressModalTitle.textContent = "성공";
+                    if (progressModalMessage) progressModalMessage.textContent = data.message;
+                    setTimeout(() => {
+                        showProgressModal(false);
+                        launchGameButton.disabled = false;
+                        launchGameButton.textContent = '게임 실행됨';
+                    }, 2000);
                 } else {
-                    alert(`게임 실행 실패: ${result.message || '알 수 없는 오류'}`);
-                    launchGameButton.disabled = false;
-                    launchGameButton.textContent = '게임 시작';
+                    // 실패 시 카운트다운 시작
+                    if (progressModalTitle) progressModalTitle.textContent = "오류 발생";
+                    if (progressModalMessage) progressModalMessage.textContent = data.message; // launch.js에서 온 displayMessage
+
+                    let countdown = 3;
+                    if (progressModalDetails) {
+                        progressModalDetails.textContent = `실패: ${countdown}초 후 자동으로 창이 닫힙니다.`;
+                    }
+
+                    if (closeModalCountdownInterval) clearInterval(closeModalCountdownInterval); // 만약을 위해 이전 인터벌 정리
+                    closeModalCountdownInterval = setInterval(() => {
+                        countdown--;
+                        if (progressModalDetails) {
+                            progressModalDetails.textContent = `실패: ${countdown}초 후 자동으로 창이 닫힙니다.`;
+                        }
+                        if (countdown <= 0) {
+                            clearInterval(closeModalCountdownInterval);
+                            closeModalCountdownInterval = null;
+                            showProgressModal(false);
+                            launchGameButton.disabled = false;
+                            launchGameButton.textContent = '게임 시작';
+                        }
+                    }, 1000); // 1초마다 실행
                 }
+                window.electronAPI.removeLaunchProgressListeners();
+            });
+
+            try {
+                await window.electronAPI.launchMinecraft();
             } catch (error) {
-                console.error('[MainMenuJS] Error calling launchMinecraft API:', error);
-                alert(`게임 실행 중 오류 발생: ${error.message}`);
-                launchGameButton.disabled = false;
-                launchGameButton.textContent = '게임 시작';
+                console.error('[MainMenuJS] Error invoking launchMinecraft in main process:', error);
+                stopTitleAnimation();
+                if (closeModalCountdownInterval) clearInterval(closeModalCountdownInterval);
+
+                updateProgressModal({ title:"런처 오류", message: '런처 오류로 실행에 실패했습니다.', progress: -1, isError: true, details: '3초 후 자동으로 창이 닫힙니다.' });
+                // showProgressModal(true); // 이미 떠 있을 수 있음
+
+                let countdown = 3;
+                // 위 updateProgressModal에서 details가 이미 설정되었으므로, 바로 인터벌 시작
+                closeModalCountdownInterval = setInterval(() => {
+                    countdown--;
+                     if (progressModalDetails) {
+                        progressModalDetails.textContent = `실패: ${countdown}초 후 자동으로 창이 닫힙니다.`;
+                    }
+                    if (countdown <= 0) {
+                        clearInterval(closeModalCountdownInterval);
+                        closeModalCountdownInterval = null;
+                        showProgressModal(false);
+                        launchGameButton.disabled = false;
+                        launchGameButton.textContent = '게임 시작';
+                    }
+                }, 1000);
+                window.electronAPI.removeLaunchProgressListeners();
             }
         });
-    } else {
-        console.error('[MainMenuJS] Launch game button element (#launchGameButton) not found.');
     }
 
     // --- 화면(뷰) 전환 및 오버레이 관리 함수 ---

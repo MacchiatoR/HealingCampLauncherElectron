@@ -379,6 +379,92 @@
             font-size: 1em;
         }
 
+        /* --- 진행률 알림 모달 스타일 --- */
+#progress-modal-overlay {
+    /* 기존 .overlay 스타일과 거의 동일하게 사용 가능 */
+    /* z-index는 설정창 오버레이보다 높거나, 상황에 따라 조절 */
+    z-index: 950; /* 예시: 설정창 오버레이(800) 및 설정창(900)보다 높게 */
+    display: flex; /* 내부 모달 중앙 정렬을 위해 */
+    align-items: center;
+    justify-content: center;
+    /* 초기에는 숨겨둠 (JS로 .visible 클래스 추가) */
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease-in-out;
+}
+
+#progress-modal-overlay.visible {
+    opacity: 1;
+    pointer-events: auto; /* 모달 외부 클릭 방지 */
+}
+
+.modal-container { /* #progress-modal에 적용될 스타일 */
+    background-color: var(--bg-color);
+    border: 1px solid var(--container-border-color);
+    border-radius: 15px;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.15);
+    padding: 30px 40px;
+    width: 90%;
+    max-width: 500px; /* 모달 너비 제한 */
+    text-align: center;
+    color: var(--text-secondary);
+    font-family: 'Gowun Dodum', sans-serif;
+    /* JS로 표시/숨김 제어되므로 transform 등으로 애니메이션 추가 가능 */
+    transform: scale(0.95);
+    opacity: 0;
+    transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+}
+
+#progress-modal-overlay.visible .modal-container {
+    transform: scale(1);
+    opacity: 1;
+}
+
+.modal-container h3 {
+    color: var(--text-primary);
+    font-size: 1.6em;
+    margin-top: 0;
+    margin-bottom: 15px;
+}
+
+.modal-container #progress-modal-message {
+    font-size: 1em;
+    margin-bottom: 25px;
+    min-height: 20px; /* 메시지 변경 시 높이 유지 */
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 12px;
+    background-color: var(--button-bg);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 15px;
+    border: 1px solid var(--button-border-color);
+}
+
+.progress-bar-fill {
+    width: 0%; /* JS로 업데이트 */
+    height: 100%;
+    background-color: var(--launch-button-bg); /* 진행 바 색상 */
+    border-radius: 6px;
+    transition: width 0.2s ease-out;
+}
+
+#progress-modal-details {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    margin-top: 10px;
+    max-height: 100px; /* 상세 로그 영역 높이 제한 */
+    overflow-y: auto;   /* 스크롤 가능하게 */
+    text-align: left;
+    background-color: rgba(0,0,0,0.02);
+    padding: 8px;
+    border-radius: 5px;
+    white-space: pre-wrap; /* 줄바꿈 및 공백 유지 */
+}
+
+
     </style>
 </head>
 <body>
@@ -410,6 +496,18 @@
         <!-- 설정 화면 플레이스홀더 (app-container의 직계 자식으로 이동) -->
         <div id="settings-view-placeholder" class="view-content initial-hidden">
             <!-- settings-content.html이 여기에 로드됩니다 -->
+        </div>
+    </div>
+
+    <div id="progress-modal-overlay" class="overlay"> <!-- 기존 오버레이와 유사하지만 별도 ID로 구분 가능 -->
+        <div id="progress-modal" class="modal-container">
+            <h3 id="progress-modal-title">게임 준비 중...</h3>
+            <div id="progress-modal-message">잠시만 기다려주세요...</div>
+            <div class="progress-bar-container">
+                <div id="progress-bar" class="progress-bar-fill"></div>
+            </div>
+            <div id="progress-modal-details"></div> <!-- 상세 로그 또는 서브 태스크 표시용 (선택적) -->
+            <!-- <button id="progress-modal-cancel-button">취소</button> (선택적) -->
         </div>
     </div>
 
