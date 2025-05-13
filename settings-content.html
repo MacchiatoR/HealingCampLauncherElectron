@@ -1,25 +1,26 @@
+      
 <!-- settings-content.html -->
 <div id="settings-view-content" class="settings-container">
     <h2>게임 설정</h2>
 
     <div class="setting-group">
         <h3>메모리 설정 (MB)</h3>
-        <!-- 최소 할당: 레이블 - 슬라이더 - (숫자 입력 + MB 표시) -->
-        <div class="setting-item memory-setting-item"> <!-- memory-setting-item 클래스 추가 -->
+        <!-- 최소 할당: 레이블 - 슬라이더 - 숫자 입력 - " MB" -->
+        <div class="setting-item memory-setting-item">
             <label for="min-memory-slider">최소 할당:</label>
             <input type="range" id="min-memory-slider" min="1024" max="16384" step="512" value="2048">
             <div class="memory-input-controls">
                 <input type="number" id="min-memory-input" class="memory-input-field" min="1024" max="16384" step="512" value="2048">
-                <span> MB</span>
+                <span> MB</span> <!--   로 약간의 공백 추가 -->
             </div>
         </div>
-        <!-- 최대 할당: 레이블 - 슬라이더 - (숫자 입력 + MB 표시) -->
-        <div class="setting-item memory-setting-item"> <!-- memory-setting-item 클래스 추가 -->
+        <!-- 최대 할당: 레이블 - 슬라이더 - 숫자 입력 - " MB" -->
+        <div class="setting-item memory-setting-item">
             <label for="max-memory-slider">최대 할당:</label>
             <input type="range" id="max-memory-slider" min="1024" max="16384" step="512" value="6144">
             <div class="memory-input-controls">
                 <input type="number" id="max-memory-input" class="memory-input-field" min="1024" max="16384" step="512" value="6144">
-                <span> MB</span>
+                <span> MB</span> <!--   로 약간의 공백 추가 -->
             </div>
         </div>
     </div>
@@ -34,19 +35,13 @@
             <label for="resolution-height-input">해상도 (세로):</label>
             <input type="number" id="resolution-height-input" placeholder="1080" min="600" value="1080">
         </div>
-        <div class="setting-item checkbox-item"> <!-- checkbox-item 클래스 유지 -->
-            <label for="fullscreen-checkbox">전체 화면 모드:</label>
+        <div class="setting-item checkbox-item">
+            <label for="fullscreen-checkbox">전체 화면:</label>
             <input type="checkbox" id="fullscreen-checkbox">
-        </div>
-    </div>
-
-    <div class="setting-group">
-        <h3>런처 설정</h3>
-        <div class="setting-item checkbox-item"> <!-- checkbox-item 클래스 유지 -->
-            <label for="allow-prerelease-checkbox">베타 버전 자동 업데이트 허용:</label>
-            <input type="checkbox" id="allow-prerelease-checkbox">
         </div>
     </div>
 
     <button class="menu-button" id="saveSettingsButton">설정 저장</button>
 </div>
+
+    
