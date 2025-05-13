@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function startTitleAnimation(baseTitle = "게임 실행 준비") {
+    function startTitleAnimation(baseTitle = "게임 실행 준비 중") {
         stopTitleAnimation(); // 기존 애니메이션 중지
         let dots = 0;
         const maxDots = 3;
@@ -122,7 +122,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     animatedTitle += ".";
                 }
                 progressModalTitle.textContent = animatedTitle;
-            }, 1000); // 0.5초마다 점 변경
+            }, 2000); // 0.5초마다 점 변경
         }
     }
 
@@ -174,7 +174,7 @@ document.addEventListener('DOMContentLoaded', () => {
             window.electronAPI.onLaunchProgressStart((data) => {
                 console.log('[MainMenuJS] IPC launch-progress-start:', data);
                 if (closeModalCountdownInterval) clearInterval(closeModalCountdownInterval); // 이전 카운트다운 중지
-                startTitleAnimation(data.title || "게임 실행 준비");
+                startTitleAnimation(data.title || "게임 실행 준비 중");
                 updateProgressModal({ message: '초기화 중...', progress: 0, details: '' }); // 상세 정보 초기화
                 showProgressModal(true);
             });

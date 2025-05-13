@@ -542,7 +542,7 @@ async function runTaskWithProgress(taskInstance, taskDescription, overallTaskKey
 // --- 메인 실행 함수 ---
 async function launchMinecraftGame() {
     // IPC로 모달 표시 요청 (렌더러에서 모달을 먼저 띄움)
-    sendProgressUpdate('launch-progress-start', { title: '게임 실행 준비' }); // '...' 제거, 애니메이션은 렌더러에서
+    sendProgressUpdate('launch-progress-start', { title: '게임 실행 준비 중' }); // '...' 제거, 애니메이션은 렌더러에서
     try {
         log.info('Starting Minecraft launch sequence...');
         sendProgressUpdate('launch-progress-update', { message: '설정 및 계정 정보 확인 중...', progress: 5, taskKey: 'init' });
