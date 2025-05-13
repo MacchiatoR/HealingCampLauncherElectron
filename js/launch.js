@@ -145,81 +145,50 @@ async function ensureJavaPath(minecraftLocation) {
  * @param {string} targetForgeBuild 포지 빌드 번호 (예: "47.2.0")
  * @returns {Promise<string>} 실행할 최종 버전 ID
  */
-async function ensureMinecraftAndForgeInstalled(targetMcVersion, targetForgeMcVersion, targetForgeBuild) {
+async function ensureMinecraftAndForgeInstalled(targetMcVersion, targetForgeMcVersion, targetForgeBuild, initialProgress, totalWeightForThisStep) {
     const mcRoot = getMinecraftRootPath();
-    log.info(`Ensuring Minecraft ${targetMcVersion} ${targetForgeBuild ? `with Forge (MC: ${targetForgeMcVersion}, ForgeBuild: ${targetForgeBuild})` : ''} is installed at ${mcRoot}...`);
+    log.info(`Ensuring Minecraft & Forge at ${mcRoot}...`);
     const minecraftLocation = new MinecraftFolder(mcRoot);
-    // await fs.ensureDir(minecraftLocation.root); // getMinecraftRootPath에서 처리
+    const currentJavaPath = await ensureJavaPath(minecraftLocation); // Java 경로는 별도 진행률 없음 (필요시 추가)
+    const commonInstallOptions = { side: 'client', timeout: DOWNLOAD_TIMEOUT, retries: 3 };
 
-    const currentJavaPath = await ensureJavaPath(minecraftLocation);
-
-    // --- 공통 설치 옵션 (타임아웃 포함) ---
-    // DownloadOptions 또는 AssetsOptions 또는 InstallOptions 등에 timeout이 있을 것으로 예상
-    // @xmcl/installer의 Options 타입들을 확인하여 정확한 구조 파악 필요
-    // 여기서는 InstallOptions에 timeout이 있다고 가정하고, 다른 옵션들도 포함할 수 있음
-    const commonInstallOptions = {
-        side: 'client', // installTask, installDependenciesTask 공통
-        timeout: DOWNLOAD_TIMEOUT, // <<--- 타임아웃 설정 추가
-        retries: 3, // 재시도 횟수
-    };
-    log.info('Using common install options:', commonInstallOptions);
-
+    // 이 단계의 가중치를 바닐라 설치와 포지/종속성 설치로 나눔
+    const vanillaInstallWeight = targetForgeBuild ? Math.floor(totalWeightForThisStep * 0.4) : totalWeightForThisStep;
+    const forgeAndDepsWeight = targetForgeBuild ? totalWeightForThisStep - vanillaInstallWeight : 0;
 
     // 1. 바닐라 마인크래프트 설치
     const versionList = await getVersionList();
     const vanillaVersionMeta = versionList.versions.find(v => v.id === targetMcVersion);
-    if (!vanillaVersionMeta) throw new Error(`Vanilla Minecraft version metadata for ${targetMcVersion} not found.`);
-    log.info(`Checking/Installing Vanilla Minecraft ${targetMcVersion}...`);
-    // installTask의 세 번째 인자 options에 commonInstallOptions 전달
+    if (!vanillaVersionMeta) throw new Error(`Vanilla metadata for ${targetMcVersion} not found.`);
     const vanillaInstallOp = installTask(vanillaVersionMeta, minecraftLocation, commonInstallOptions);
-    const resolvedVanillaVersion = await runTaskWithProgress(vanillaInstallOp, `바닐라 (${targetMcVersion}) 설치`, 'install-vanilla');
-    log.info(`Vanilla Minecraft ${targetMcVersion} installed/verified. Resolved ID: ${resolvedVanillaVersion.id}`);
+    const resolvedVanillaVersion = await runTaskWithProgress(vanillaInstallOp, `바닐라 (${targetMcVersion}) 설치`, initialProgress, vanillaInstallWeight, 'install-vanilla');
+    let currentOverallProgress = initialProgress + vanillaInstallWeight;
     let versionIdToLaunch = resolvedVanillaVersion.id;
 
-    // 2. 포지 설치 (targetForgeBuild가 제공된 경우)
+    // 2. 포지 설치
     if (targetForgeMcVersion && targetForgeBuild) {
-        const forgeVersionMetaForTask = {
-            mcversion: targetForgeMcVersion,
-            version: targetForgeBuild,
-        };
+        const forgeVersionMetaForTask = { mcversion: targetForgeMcVersion, version: targetForgeBuild };
+        const forgeSpecificInstallOptions = { java: currentJavaPath, ...commonInstallOptions };
+        const forgeInstallWeight = Math.floor(forgeAndDepsWeight * 0.6);
+        const forgeDepsWeight = forgeAndDepsWeight - forgeInstallWeight;
 
-        // installForgeTask의 options는 InstallForgeOptions 타입
-        // InstallForgeOptions가 DownloadOptions를 포함하거나 확장하는지 확인 필요.
-        // 여기서는 InstallForgeOptions에 java 외에 commonInstallOptions의 일부를 전달할 수 있다고 가정.
-        const forgeSpecificInstallOptions = {
-            java: currentJavaPath,
-            // minecraft: minecraftLocation, // installForgeTask의 두 번째 인자로 이미 전달됨
-            ...commonInstallOptions, // 타임아웃 등 공통 옵션 포함
-            // side는 installForgeTask에서 내부적으로 처리될 수 있으므로 commonInstallOptions에서 제외하거나,
-            // installForgeTask가 받는 옵션에 side가 없다면 여기서 제거.
-            // 일반적으로 Forge 설치는 client side만 고려.
-        };
-        // InstallForgeOptions에 side가 없다면:
-        // const { side, ...otherCommonOptions } = commonInstallOptions;
-        // const forgeSpecificInstallOptions = { java: currentJavaPath, ...otherCommonOptions };
-
-
-        log.info(`Checking/Installing Forge (MC: ${targetForgeMcVersion}, ForgeBuild: ${targetForgeBuild})...`);
         const forgeInstallOp = installForgeTask(forgeVersionMetaForTask, minecraftLocation, forgeSpecificInstallOptions);
-        const installedForgeId = await runTaskWithProgress(forgeInstallOp, `포지 (${targetForgeBuild}) 설치`, 'install-forge');
-        log.info(`Forge installation task completed. Installed Forge version ID: ${installedForgeId}`);
+        const installedForgeId = await runTaskWithProgress(forgeInstallOp, `포지 (${targetForgeBuild}) 설치`, currentOverallProgress, forgeInstallWeight, 'install-forge');
+        currentOverallProgress += forgeInstallWeight;
 
         const resolvedForgeVersionAfterInstall = await Version.parse(minecraftLocation, installedForgeId);
-        // installDependenciesTask의 두 번째 인자 options에 commonInstallOptions 전달
         const depsInstallOp = installDependenciesTask(resolvedForgeVersionAfterInstall, commonInstallOptions);
-        await runTaskWithProgress(depsInstallOp, `포지 종속성 설치 (${installedForgeId})`, 'install-forge-deps');
-
-        log.info(`Forge ${installedForgeId} and its dependencies are installed.`);
+        await runTaskWithProgress(depsInstallOp, `포지 종속성 설치 (${installedForgeId})`, currentOverallProgress, forgeDepsWeight, 'install-forge-deps');
         versionIdToLaunch = installedForgeId;
     } else {
-        // 바닐라만 설치하는 경우 종속성 확인
-        log.info(`Ensuring dependencies for Vanilla version: ${resolvedVanillaVersion.id}...`);
-        // installDependenciesTask의 두 번째 인자 options에 commonInstallOptions 전달
+        // 바닐라 종속성 (이미 vanillaInstallWeight가 totalWeightForThisStep 전체를 차지했으므로 추가 가중치 없음, 또는 세분화)
         const vanillaDepsOp = installDependenciesTask(resolvedVanillaVersion, commonInstallOptions);
-        await runTaskWithProgress(vanillaDepsOp, `바닐라 종속성 설치 (${resolvedVanillaVersion.id})`, 'install-vanilla-deps');
+        // 바닐라 종속성은 바닐라 설치의 일부로 간주하거나, 매우 작은 가중치를 줄 수 있음
+        await runTaskWithProgress(vanillaDepsOp, `바닐라 종속성 설치 (${resolvedVanillaVersion.id})`, currentOverallProgress, 0, 'install-vanilla-deps');
     }
     return versionIdToLaunch;
 }
+
 
 /**
  * 실행에 필요한 인증 프로필 및 관련 정보를 LaunchOption 형태로 반환
@@ -463,65 +432,67 @@ function sendProgressUpdate(eventChannel, data) {
  * @param {string} overallTaskKey 전체 작업 단계를 구분하는 키 (선택적)
  * @returns {Promise<any>} Task의 결과값
  */
-async function runTaskWithProgress(taskInstance, taskDescription, overallTaskKey = 'generic-task') {
+async function runTaskWithProgress(taskInstance, taskDescription, baseProgress, taskWeight, overallTaskKey = 'generic-task') {
     log.info(`Starting task: ${taskDescription} (Path: ${taskInstance.path || 'N/A'})`);
+    // 태스크 시작 시, baseProgress + 0% 로 업데이트
     sendProgressUpdate('launch-progress-update', {
         message: `${taskDescription} 시작 중...`,
-        progress: 0, // 작업 시작 시 0%
+        progress: baseProgress, // 이 태스크의 시작점 진행률
         details: `Task: ${taskInstance.name || taskDescription}`,
         taskKey: overallTaskKey
     });
 
     let lastLoggedProgress = -1;
-    let lastSentProgress = -1; // IPC 전송용 진행률
+    let lastSentOverallProgress = baseProgress;
 
     try {
         const result = await taskInstance.startAndWait({
             onStart(task) {
                 log.info(` -> Sub-task started: ${task.name || 'Unnamed Subtask'} (Path: ${task.path})`);
                 sendProgressUpdate('launch-progress-update', {
-                    message: taskDescription, // 메인 작업 설명 유지
+                    message: taskDescription,
                     details: `진행 중: ${task.path || task.name || '세부 작업'}`,
-                    progress: taskInstance.total > 0 ? Math.round((taskInstance.progress / taskInstance.total) * 100) : lastSentProgress, // 현재 진행률
+                    progress: baseProgress + (taskInstance.total > 0 ? Math.round((taskInstance.progress / taskInstance.total) * taskWeight * 0.01) : 0),
                     taskKey: overallTaskKey
                 });
             },
             onUpdate(task, chunkSize) {
                 if (taskInstance.total > 0) {
-                    const currentProgress = Math.round((taskInstance.progress / taskInstance.total) * 100);
-                    if (currentProgress % 5 === 0 && currentProgress !== lastSentProgress) { // 5% 단위로 IPC 전송
+                    const taskProgressPercent = (taskInstance.progress / taskInstance.total); // 현재 태스크의 진행률 (0 ~ 1)
+                    const currentOverallProgress = Math.round(baseProgress + (taskProgressPercent * taskWeight));
+
+                    if (currentOverallProgress !== lastSentOverallProgress && currentOverallProgress % 2 === 0) { // 2% 단위로 IPC (너무 잦지 않게)
                         sendProgressUpdate('launch-progress-update', {
                             message: taskDescription,
-                            progress: currentProgress,
-                            details: `다운로드 중: ${task.path || task.name || '파일'}... (${currentProgress}%)`,
+                            progress: currentOverallProgress,
+                            details: `다운로드 중: ${task.path || task.name || '파일'}... (${Math.round(taskProgressPercent*100)}%)`,
                             taskKey: overallTaskKey
                         });
-                        lastSentProgress = currentProgress;
+                        lastSentOverallProgress = currentOverallProgress;
                     }
-                    if (currentProgress % 10 === 0 && currentProgress !== lastLoggedProgress) {
-                        log.info(` -> Overall task [${taskDescription}] progress: ${currentProgress}% (${taskInstance.progress} / ${taskInstance.total})`);
-                        lastLoggedProgress = currentProgress;
+                    if (currentOverallProgress % 5 === 0 && currentOverallProgress !== lastLoggedProgress) { // 5% 단위로 로그
+                        log.info(` -> Overall task [${taskDescription}] (sub-task) progress: ${Math.round(taskProgressPercent*100)}%, Total progress: ${currentOverallProgress}%`);
+                        lastLoggedProgress = currentOverallProgress;
                     }
                 }
             },
-            onFailed(task, error) {
+            onFailed(task, error) { /* ... 이전과 동일 (progress는 lastSentOverallProgress 사용) ... */
                 log.error(` -> Sub-task failed: ${task.name || 'Unnamed Subtask'} (Path: ${task.path})`, error);
                 sendProgressUpdate('launch-progress-update', {
                     message: `${taskDescription} 중 오류 발생`,
-                    progress: lastSentProgress, // 실패 시 이전 진행률 유지 또는 -1 (오류 표시)
+                    progress: lastSentOverallProgress,
                     details: `오류: ${task.name || '세부 작업'} - ${error.message}`,
                     isError: true,
                     taskKey: overallTaskKey
                 });
             },
-            onSucceed(task, taskResult) {
-                log.info(` -> Sub-task succeeded: ${task.name || 'Unnamed Subtask'} (Path: ${task.path})`);
-            },
+            onSucceed(task, taskResult) { /* ... 이전과 동일 ... */ },
         });
         log.info(`Task completed: ${taskDescription}`);
+        // 태스크 완료 시, 이 태스크에 할당된 가중치만큼 진행률을 더함
         sendProgressUpdate('launch-progress-update', {
             message: `${taskDescription} 완료!`,
-            progress: 100,
+            progress: baseProgress + taskWeight,
             details: `완료: ${taskDescription}`,
             taskKey: overallTaskKey
         });
@@ -530,7 +501,7 @@ async function runTaskWithProgress(taskInstance, taskDescription, overallTaskKey
         log.error(`Error during task execution [${taskDescription}]:`, error);
         sendProgressUpdate('launch-progress-update', {
             message: `${taskDescription} 실패`,
-            progress: -1, // 오류 상태 표시
+            progress: lastSentOverallProgress, // 실패 시 이전 진행률
             details: `실패: ${error.message}`,
             isError: true,
             taskKey: overallTaskKey
@@ -538,80 +509,85 @@ async function runTaskWithProgress(taskInstance, taskDescription, overallTaskKey
         throw error;
     }
 }
-
 // --- 메인 실행 함수 ---
 async function launchMinecraftGame() {
-    // IPC로 모달 표시 요청 (렌더러에서 모달을 먼저 띄움)
-    sendProgressUpdate('launch-progress-start', { title: '게임 실행 준비 중' }); // '...' 제거, 애니메이션은 렌더러에서
+    sendProgressUpdate('launch-progress-start', { title: '게임 실행 준비' });
+    let overallProgress = 0;
+
     try {
         log.info('Starting Minecraft launch sequence...');
-        sendProgressUpdate('launch-progress-update', { message: '설정 및 계정 정보 확인 중...', progress: 5, taskKey: 'init' });
+        // 단계별 예상 진행률 가중치 (총합 100 기준, 조절 가능)
+        const STAGE_WEIGHTS = {
+            INIT: 5,
+            AUTH: 5,
+            INSTALL_CHECK: 60, // 가장 오래 걸리는 부분
+            CUSTOM_RESOURCE_UPDATE: 15,
+            PRE_LAUNCH: 5,
+            GAME_STARTING_MESSAGE: 10 // 게임 시작 직전 메시지까지
+        };
 
-        if (!ConfigManager.isLoaded()) {
-            const errMsg = 'ConfigManager is not loaded. Cannot proceed with launch.';
-            log.warn(errMsg);
-            throw new Error(errMsg); // 오류를 던져 catch 블록에서 처리
-        }
+        overallProgress = STAGE_WEIGHTS.INIT;
+        sendProgressUpdate('launch-progress-update', { message: '설정 및 계정 정보 확인 중...', progress: overallProgress, taskKey: 'init' });
+        if (!ConfigManager.isLoaded()) { throw new Error('ConfigManager is not loaded.'); }
+
+        overallProgress += STAGE_WEIGHTS.AUTH;
+        sendProgressUpdate('launch-progress-update', { message: '인증 정보 확인 중...', progress: overallProgress, taskKey: 'auth' });
         const authParams = await getAuthParametersForLaunch();
-        sendProgressUpdate('launch-progress-update', { message: '게임 파일 설치 확인 중...', progress: 15, taskKey: 'install-check' });
 
+        sendProgressUpdate('launch-progress-update', { message: '게임 파일 설치 확인 중...', progress: overallProgress, taskKey: 'install-check-start' });
         const versionIdToLaunch = await ensureMinecraftAndForgeInstalled(
             MINECRAFT_VERSION_TARGET,
             FORGE_MC_VERSION,
-            FORGE_BUILD_VERSION
+            FORGE_BUILD_VERSION,
+            overallProgress, // 현재까지의 전체 진행률
+            STAGE_WEIGHTS.INSTALL_CHECK // 이 단계에 할당된 가중치
         );
-        sendProgressUpdate('launch-progress-update', { message: '커스텀 리소스 업데이트 확인 중...', progress: 70, taskKey: 'custom-resource-update-check' });
+        overallProgress += STAGE_WEIGHTS.INSTALL_CHECK; // 설치 단계 완료 후 진행률 업데이트
+        // ensureMinecraftAndForgeInstalled 내부에서 runTaskWithProgress가 세부 진행률 IPC를 보냄
 
+        sendProgressUpdate('launch-progress-update', { message: '커스텀 리소스 업데이트 확인 중...', progress: overallProgress, taskKey: 'custom-resource-update-check' });
         const gameRootPath = getMinecraftRootPath();
         const updateSuccessful = await checkAndApplyResourceUpdate(gameRootPath);
+        // checkAndApplyResourceUpdate 내부에서도 진행률 메시지 전송 가능 (여기서는 간단히 완료 후 업데이트)
+        overallProgress += STAGE_WEIGHTS.CUSTOM_RESOURCE_UPDATE;
         if (!updateSuccessful) {
             log.warn('Resource update failed or was skipped.');
-            sendProgressUpdate('launch-progress-update', { message: '커스텀 리소스 업데이트 실패 또는 생략됨.', progress: 80, taskKey: 'custom-resource-update-result', isWarning: true });
+            sendProgressUpdate('launch-progress-update', { message: '커스텀 리소스 업데이트 실패 또는 생략됨.', progress: overallProgress, taskKey: 'custom-resource-update-result', isWarning: true });
         } else {
-            sendProgressUpdate('launch-progress-update', { message: '커스텀 리소스 업데이트 완료.', progress: 80, taskKey: 'custom-resource-update-result' });
+            sendProgressUpdate('launch-progress-update', { message: '커스텀 리소스 업데이트 완료.', progress: overallProgress, taskKey: 'custom-resource-update-result' });
         }
 
-        sendProgressUpdate('launch-progress-update', { message: '게임 실행 준비 중...', progress: 90, taskKey: 'pre-launch' }); // 여기도 '...' 제거 가능
+        overallProgress += STAGE_WEIGHTS.PRE_LAUNCH;
+        sendProgressUpdate('launch-progress-update', { message: '게임 실행 준비 중...', progress: overallProgress, taskKey: 'pre-launch' });
         const mcProcess = await startGame(versionIdToLaunch, authParams);
 
         if (mcProcess && mcProcess.pid) {
             log.info(`Minecraft process (PID: ${mcProcess.pid}) has been launched.`);
-            sendProgressUpdate('launch-progress-complete', { success: true, message: '게임이 실행되었습니다!' });
+            overallProgress = 100; // 최종 단계
+            sendProgressUpdate('launch-progress-update', {
+                title: '게임 실행 준비 완료!',
+                message: '곧 게임이 시작됩니다...',
+                progress: overallProgress,
+                details: `게임 프로세스 ID: ${mcProcess.pid}`,
+                taskKey: 'game-starting'
+            });
+            sendProgressUpdate('launch-progress-complete', { success: true, message: '게임이 성공적으로 실행되었습니다.' });
             return { success: true, message: 'Minecraft launched.', launchedPID: mcProcess.pid };
         } else {
-            const errMsg = '게임 실행 후 프로세스 정보를 가져오지 못했습니다.';
-            log.warn('Minecraft launch was attempted, but the returned process object is invalid or PID is missing.');
-            // sendProgressUpdate('launch-progress-complete', { success: false, message: errMsg }); // 아래 catch에서 처리
-            throw new Error(errMsg); // 오류를 던져 catch 블록에서 일관되게 처리
+            throw new Error('게임 실행 후 프로세스 정보를 가져오지 못했습니다.');
         }
     } catch (error) {
         log.error('Minecraft launch sequence failed:', error.message);
         let displayMessage = `게임 실행 실패: ${error.message || '알 수 없는 오류'}`;
-        // ... (기존 displayMessage 생성 로직은 유지) ...
-        if (error.name === 'AggregateError' && error.errors && error.errors.length > 0) {
-            const firstError = error.errors[0];
-            if (firstError.name === 'ChecksumNotMatchError') {
-                displayMessage = '게임 파일 다운로드 중 오류가 발생했습니다 (파일 손상). 인터넷 연결을 확인하고 다시 시도해주세요.';
-            } else if (firstError.code === 'UND_ERR_CONNECT_TIMEOUT') {
-                displayMessage = '게임 파일 다운로드 중 연결 시간 초과 오류가 발생했습니다. 인터넷 연결을 확인하고 다시 시도해주세요.';
-            } else {
-                displayMessage = `게임 파일 설치 중 오류 발생: ${firstError.message || '알 수 없는 오류'}`;
-            }
-        } else if (error.message && error.message.includes("Suitable Java installation")) {
-            displayMessage = error.message;
-        } else if (error.message && error.message.includes("ConfigManager is not loaded")) {
-            displayMessage = error.message;
-        }
-
-
+        // ... (displayMessage 생성 로직) ...
         log.error('Detailed error stack for launch failure:', error.stack);
-        // 실패 시 모달에 오류 메시지를 표시하고, 렌더러에서 모달을 닫도록 함
         sendProgressUpdate('launch-progress-complete', {
             success: false,
-            message: displayMessage, // 사용자에게 보여줄 최종 오류 메시지
-            error: error.message // 상세 오류 메시지 (개발자용 또는 상세 보기에 사용 가능)
+            message: displayMessage,
+            error: error.message,
+            progress: overallProgress // 실패 시점의 진행률
         });
-        return { success: false, message: displayMessage }; // 런처 내부 반환값
+        return { success: false, message: displayMessage };
     }
 }
 

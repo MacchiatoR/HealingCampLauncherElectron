@@ -137,7 +137,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.removeAllListeners('launch-progress-start');
         ipcRenderer.removeAllListeners('launch-progress-update');
         ipcRenderer.removeAllListeners('launch-progress-complete');
-    }
+    },
+    requestAppQuit: () => ipcRenderer.send('request-app-quit')
 });
 
 console.log('[Preload] electronAPI has been exposed to the window object.');

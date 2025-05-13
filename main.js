@@ -541,26 +541,30 @@ ipcMain.on(MSFT_OPCODE.OPEN_LOGOUT, async (ipcEvent, uuid) => {
 
 
 // 게임 시작 요청 IPC 핸들러
-ipcMain.handle('launch-minecraft', async () => {
+ipcMain.handle('launch-minecraft', async (event) => { // event 인자 추가
     log.info('[IPC] Received request to launch Minecraft.');
     try {
         const launchResult = await launchMinecraftGame();
         if (launchResult.success) {
             log.info(`[IPC] ${launchResult.message}`);
-            // 마인크래프트가 성공적으로 시작되었으므로 런처 종료
-            app.quit();
-            return { success: true};
+            // app.quit(); // <<--- 제거!
+            return { success: true, message: launchResult.message, launchedPID: launchResult.launchedPID }; // 성공 메시지와 PID 반환
         } else {
             log.error('[IPC] Failed to launch Minecraft:', launchResult.message);
-            // 사용자에게 오류 메시지를 dialog로 보여주는 것이 좋음
             dialog.showErrorBox('게임 실행 오류', launchResult.message);
             return { success: false, message: launchResult.message };
         }
-    } catch (error) { // launchMinecraftGame 내부에서 throw된 오류
+    } catch (error) {
         log.error('[IPC] Critical error launching Minecraft:', error);
         dialog.showErrorBox('게임 실행 중 심각한 오류', error.message || '알 수 없는 오류가 발생했습니다.');
         return { success: false, message: error.message || 'Failed to launch Minecraft due to an unexpected error.' };
     }
+});
+
+// 렌더러로부터 앱 종료 요청을 받는 핸들러 추가
+ipcMain.on('request-app-quit', () => {
+    log.info('[IPC] Received request-app-quit from renderer. Quitting app.');
+    app.quit();
 });
 
 ipcMain.handle('settings:get-all', async () => {

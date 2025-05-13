@@ -101,6 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- 모달 관리 ---
     let titleAnimationInterval = null; // 타이틀 애니메이션 인터벌 ID
     let closeModalCountdownInterval = null; // 모달 닫기 카운트다운 인터벌 ID
+    let closeModalSuccessTimeout = null; // 성공 시 모달 닫기 타임아웃 ID
 
     function stopTitleAnimation() {
         if (titleAnimationInterval) {
@@ -133,85 +134,131 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 progressModalOverlay.classList.remove('visible');
                 stopTitleAnimation();
-                if (closeModalCountdownInterval) { // 카운트다운 중지
+                if (closeModalCountdownInterval) {
                     clearInterval(closeModalCountdownInterval);
                     closeModalCountdownInterval = null;
+                }
+                if (closeModalSuccessTimeout) { // 성공 타임아웃도 클리어
+                    clearTimeout(closeModalSuccessTimeout);
+                    closeModalSuccessTimeout = null;
                 }
             }
         }
     }
 
     function updateProgressModal({ title, message, progress, details, isError = false, isWarning = false }) {
-        // ... (이전 updateProgressModal 로직과 거의 동일, 오류 시 타이틀 변경 부분은 onLaunchProgressComplete에서 처리 가능)
+        // 타이틀은 startTitleAnimation 또는 직접 설정으로 관리
+        if (progressModalTitle && title) progressModalTitle.textContent = title;
         if (progressModalMessage && message) progressModalMessage.textContent = message;
+
         if (progressBar && typeof progress === 'number') {
             progressBar.style.width = `${Math.max(0, Math.min(100, progress))}%`;
-            if (isError) {
-                progressBar.style.backgroundColor = 'var(--text-primary)';
-                // stopTitleAnimation(); // 애니메이션 중지는 showProgressModal(false) 또는 complete 핸들러에서
-            } else if (isWarning) {
-                progressBar.style.backgroundColor = 'orange';
-            } else {
-                progressBar.style.backgroundColor = 'var(--launch-button-bg)';
-            }
+            if (isError) progressBar.style.backgroundColor = 'var(--text-primary)';
+            else if (isWarning) progressBar.style.backgroundColor = 'orange';
+            else progressBar.style.backgroundColor = 'var(--launch-button-bg)';
         }
-        if (progressModalDetails && details !== undefined) { // details가 명시적으로 제공될 때만 업데이트
+        if (progressModalDetails && details !== undefined) {
             progressModalDetails.textContent = details;
         }
     }
 
-
     // --- 게임 실행 버튼 이벤트 ---
     if (launchGameButton) {
         launchGameButton.addEventListener('click', async () => {
-            // ... (리스너 등록 및 실행 요청 부분은 이전과 동일) ...
             console.log('[MainMenuJS] Launch game button clicked, invoking main process.');
             launchGameButton.disabled = true;
             launchGameButton.textContent = '실행 준비 중...';
 
             window.electronAPI.removeLaunchProgressListeners();
+            if (closeModalSuccessTimeout) clearTimeout(closeModalSuccessTimeout);
+            if (closeModalCountdownInterval) clearInterval(closeModalCountdownInterval);
 
+            console.log('[MainMenuJS] Setting up IPC progress listeners.');
             window.electronAPI.onLaunchProgressStart((data) => {
                 console.log('[MainMenuJS] IPC launch-progress-start:', data);
-                if (closeModalCountdownInterval) clearInterval(closeModalCountdownInterval); // 이전 카운트다운 중지
-                startTitleAnimation(data.title || "게임 실행 준비 중");
-                updateProgressModal({ message: '초기화 중...', progress: 0, details: '' }); // 상세 정보 초기화
+                startTitleAnimation(data.title || "게임 실행 준비");
+                updateProgressModal({ message: '초기화 중...', progress: 0, details: '' });
                 showProgressModal(true);
             });
 
             window.electronAPI.onLaunchProgressUpdate((data) => {
                 console.log('[MainMenuJS] IPC launch-progress-update:', data);
-                updateProgressModal(data);
+                if (data.taskKey === 'game-starting') {
+                    stopTitleAnimation();
+                    updateProgressModal({
+                        title: data.title,
+                        message: data.message,
+                        progress: data.progress,
+                        details: data.details
+                    });
+                } else {
+                    updateProgressModal({
+                        message: data.message,
+                        progress: data.progress,
+                        details: data.details,
+                        isError: data.isError,
+                        isWarning: data.isWarning
+                    });
+                }
             });
 
             window.electronAPI.onLaunchProgressComplete(async (data) => {
                 console.log('[MainMenuJS] IPC launch-progress-complete:', data);
                 stopTitleAnimation();
-                updateProgressModal(data); // 최종 메시지 (성공 또는 실패 메시지)
+                // updateProgressModal(data); // 최종 메시지는 아래에서 개별적으로 설정
 
                 if (data.success) {
-                    if (progressModalTitle) progressModalTitle.textContent = "성공";
-                    if (progressModalMessage) progressModalMessage.textContent = data.message;
-                    setTimeout(() => {
-                        showProgressModal(false);
-                        launchGameButton.disabled = false;
-                        launchGameButton.textContent = '게임 실행됨';
-                    }, 2000);
+                    let countdown = 3; // 성공 시 카운트다운 시간 (예: 5초)
+                    const successTitle = "성공!";
+                    const baseSuccessMessage = data.message || "게임이 실행되었습니다.";
+                    const baseSuccessDetails = "런처가 자동으로 종료됩니다.";
+
+                    if (progressModalTitle) progressModalTitle.textContent = successTitle;
+                    if (progressModalMessage) progressModalMessage.textContent = `완료: ${baseSuccessMessage} ${countdown}초 후 ${baseSuccessDetails}`;
+                    if (progressModalDetails) progressModalDetails.textContent = `완료: ${countdown}초 후 ${baseSuccessDetails}`;
+                    if (progressBar) progressBar.style.width = '100%'; // 성공 시 100%
+
+                    // 이전 타이머/인터벌 정리
+                    if (closeModalSuccessTimeout) clearTimeout(closeModalSuccessTimeout);
+                    if (closeModalCountdownInterval) clearInterval(closeModalCountdownInterval);
+
+                    closeModalSuccessTimeout = setInterval(() => { // setTimeout 대신 setInterval 사용
+                        countdown--;
+                        if (progressModalMessage) progressModalMessage.textContent = `${baseSuccessMessage} ${countdown}초 후 ${baseSuccessDetails}`;
+                        if (progressModalDetails) progressModalDetails.textContent = `${countdown}초 후 ${baseSuccessDetails}`;
+
+                        if (countdown <= 0) {
+                            clearInterval(closeModalSuccessTimeout); // 인터벌 정리
+                            closeModalSuccessTimeout = null;
+                            showProgressModal(false);
+                            if (window.electronAPI && typeof window.electronAPI.requestAppQuit === 'function') {
+                                console.log('[MainMenuJS] Requesting app quit after successful launch and countdown.');
+                                window.electronAPI.requestAppQuit();
+                            } else {
+                                console.error('[MainMenuJS] electronAPI.requestAppQuit is not available.');
+                                launchGameButton.disabled = false;
+                                launchGameButton.textContent = '게임 시작';
+                            }
+                        }
+                    }, 1000); // 1초마다 실행
+
                 } else {
-                    // 실패 시 카운트다운 시작
+                    // 실패 시 카운트다운 로직 (이전과 거의 동일, 메시지 정리)
                     if (progressModalTitle) progressModalTitle.textContent = "오류 발생";
                     if (progressModalMessage) progressModalMessage.textContent = data.message; // launch.js에서 온 displayMessage
 
-                    let countdown = 3;
+                    let countdown = 3; // 실패 시 카운트다운 시간
                     if (progressModalDetails) {
-                        progressModalDetails.textContent = `실패: ${countdown}초 후 자동으로 창이 닫힙니다.`;
+                        progressModalDetails.textContent = `오류: ${countdown}초 후 자동으로 창이 닫힙니다.`;
                     }
 
-                    if (closeModalCountdownInterval) clearInterval(closeModalCountdownInterval); // 만약을 위해 이전 인터벌 정리
+                    if (closeModalCountdownInterval) clearInterval(closeModalCountdownInterval);
+                    closeModalSuccessTimeout = null; // 성공 타임아웃도 확실히 클리어
+
                     closeModalCountdownInterval = setInterval(() => {
                         countdown--;
                         if (progressModalDetails) {
-                            progressModalDetails.textContent = `실패: ${countdown}초 후 자동으로 창이 닫힙니다.`;
+                            progressModalDetails.textContent = `오류: ${countdown}초 후 자동으로 창이 닫힙니다.`;
                         }
                         if (countdown <= 0) {
                             clearInterval(closeModalCountdownInterval);
@@ -220,23 +267,31 @@ document.addEventListener('DOMContentLoaded', () => {
                             launchGameButton.disabled = false;
                             launchGameButton.textContent = '게임 시작';
                         }
-                    }, 1000); // 1초마다 실행
+                    }, 1000);
                 }
                 window.electronAPI.removeLaunchProgressListeners();
             });
 
             try {
-                await window.electronAPI.launchMinecraft();
+                console.log('[MainMenuJS] Invoking electronAPI.launchMinecraft() to start the game.');
+                await window.electronAPI.launchMinecraft(); // <<--- 이 호출을 다시 추가합니다.
+                // 이 호출의 결과는 onLaunchProgressComplete에서 주로 처리됩니다.
+                // launchMinecraft()는 main.js의 'launch-minecraft' 핸들러를 호출하고,
+                // 그 핸들러는 launch.js의 launchMinecraftGame()을 실행합니다.
+                // launchMinecraftGame()은 진행 상황에 따라 sendProgressUpdate를 호출합니다.
             } catch (error) {
-                console.error('[MainMenuJS] Error invoking launchMinecraft in main process:', error);
+                // 이 catch 블록은 window.electronAPI.launchMinecraft() 호출 자체가 실패했을 때 실행됩니다.
+                // (예: preload.js에 함수가 없거나, ipcMain.handle에서 reject된 경우)
+                // launch.js 내부의 오류는 보통 launch-progress-complete { success: false }로 전달됩니다.
+                console.error('[MainMenuJS] Critical error invoking electronAPI.launchMinecraft():', error);
                 stopTitleAnimation();
                 if (closeModalCountdownInterval) clearInterval(closeModalCountdownInterval);
+                if (closeModalSuccessTimeout) clearTimeout(closeModalSuccessTimeout);
 
-                updateProgressModal({ title:"런처 오류", message: '런처 오류로 실행에 실패했습니다.', progress: -1, isError: true, details: '3초 후 자동으로 창이 닫힙니다.' });
-                // showProgressModal(true); // 이미 떠 있을 수 있음
+                updateProgressModal({ title:"런처 오류", message: `런처 통신 오류: ${error.message || '알 수 없는 오류'}`, progress: -1, isError: true, details: '3초 후 자동으로 창이 닫힙니다.' });
+                showProgressModal(true); // 모달이 안 떴을 수 있으니 명시적으로 표시
 
                 let countdown = 3;
-                // 위 updateProgressModal에서 details가 이미 설정되었으므로, 바로 인터벌 시작
                 closeModalCountdownInterval = setInterval(() => {
                     countdown--;
                      if (progressModalDetails) {
@@ -252,6 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }, 1000);
                 window.electronAPI.removeLaunchProgressListeners();
             }
+            // =============================================================
         });
     }
 
