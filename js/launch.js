@@ -344,7 +344,7 @@ async function startGame(versionIdToLaunch, authParams) {
 
         minMemory: minMemory, // MB 단위
         maxMemory: maxMemory, // MB 단위
-        resolution: { gameResolutionWidth, gameResolutionHeight, fullscreen },
+        resolution: { width: gameResolutionWidth, height: gameResolutionHeight, fullscreen: fullscreen },
 
         // 기존 extraExecOption 유지 또는 ConfigManager에서 가져오기
         extraExecOption: { detached: true, stdio: 'ignore' } // 예시
