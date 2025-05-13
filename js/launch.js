@@ -21,12 +21,6 @@ const { app } = require('electron');
 
 const ConfigManager = require('./confighandler'); // 가정: ConfigManager는 별도로 존재
 const AuthHandler = require('./authhandler');   // 가정: AuthHandler는 별도로 존재 (토큰 갱신 등)
-const { Dispatcher, Agent } = require('undici');
-const customAgent = new Agent({
-    connections: 4, // 동시 연결 수를 줄여봄 (기본값보다 작게, 예: 4 또는 8)
-    pipelining: 1, // 파이프라이닝도 줄여볼 수 있음
-    // connectTimeout: 30000, // 타임아웃 시간을 늘려볼 수도 있음 (기본 10초)
-});
 
 const log = {
     info: (message, ...args) => console.log(`[GameLauncher] [INFO] ${new Date().toISOString()} ${message}`, ...args),
@@ -235,43 +229,43 @@ async function ensureMinecraftAndForgeInstalled(targetMcVersion, targetForgeMcVe
 
 
 /**
- * 실행에 필요한 인증 프로필 가져오기
- * @returns {Promise<LaunchOption['user']>} LaunchOption에 맞는 user 객체
+ * 실행에 필요한 인증 프로필 및 관련 정보를 LaunchOption 형태로 반환
+ * @returns {Promise<Pick<LaunchOption, 'gameProfile' | 'accessToken' | 'userType' | 'properties'>>}
  */
-async function getAuthProfileForLaunch() {
-    // 이 함수는 이전 답변에서 ConfigManager와 AuthHandler를 사용하여 구현한 것을 그대로 사용하거나,
-    // xmcl/user와 xmcl/microsoft-constructor를 사용하도록 수정할 수 있습니다.
-    // 여기서는 이전 답변의 로직을 사용한다고 가정합니다.
-    log.info("Attempting to get selected account from ConfigManager...");
+async function getAuthParametersForLaunch() { // 함수 이름 변경 (더 명확하게)
+    log.info("Attempting to get selected account from ConfigManager for launch parameters...");
     const selectedAccount = ConfigManager.getSelectedAccount();
 
     log.info("Selected account object from ConfigManager:", JSON.stringify(selectedAccount, null, 2));
 
     if (!selectedAccount || typeof selectedAccount.username !== 'string' || typeof selectedAccount.uuid !== 'string' ||
-        selectedAccount.type !== 'microsoft' || typeof selectedAccount.accessToken !== 'string' || // mcAccessToken
-        typeof selectedAccount.expiresAt !== 'number' || // mcAccessTokenExpiresAt
-        !selectedAccount.microsoft || typeof selectedAccount.microsoft.refresh_token !== 'string') { // msRefreshToken
-        const msg = "Selected Microsoft account information is invalid or missing required fields. Please login again.";
+        selectedAccount.type !== 'microsoft' || typeof selectedAccount.accessToken !== 'string' ||
+        typeof selectedAccount.expiresAt !== 'number' ||
+        typeof selectedAccount.msRefreshToken !== 'string') {
+        const msg = "Selected Microsoft account information is invalid or missing required fields for launch. Please login again.";
         log.error(msg, selectedAccount);
         throw new Error(msg);
     }
 
-    log.info(`Selected account for launch: ${selectedAccount.username} (UUID: ${selectedAccount.uuid})`);
+    log.info(`Preparing launch parameters for: ${selectedAccount.username} (UUID: ${selectedAccount.uuid})`);
 
-    let currentMcAccessToken = selectedAccount.accessToken;
+    let currentMcAccessToken = selectedAccount.accessToken; // confighandler에 저장된 Minecraft Access Token
     const mcTokenExpiresAt = selectedAccount.expiresAt;
-    const msRefreshToken = selectedAccount.microsoft.refresh_token;
+    const msRefreshTokenFromConfig = selectedAccount.msRefreshToken;
+
     const now = Date.now();
     const fiveMinutesInMs = 5 * 60 * 1000;
 
     if (!currentMcAccessToken || !mcTokenExpiresAt || mcTokenExpiresAt - fiveMinutesInMs < now) {
-        log.warn(`Minecraft Access Token for ${selectedAccount.username} is missing or needs refresh. Attempting refresh...`);
-        if (!msRefreshToken) throw new Error("Cannot refresh MC Token: MS Refresh Token is missing.");
+        log.warn(`Minecraft Access Token for ${selectedAccount.username} needs refresh. Attempting...`);
+        if (!msRefreshTokenFromConfig) throw new Error("Cannot refresh MC Token: MS Refresh Token is missing.");
         try {
-            const refreshedData = await AuthHandler.refreshTokensForLaunch(selectedAccount.uuid, msRefreshToken);
+            const refreshedData = await AuthHandler.refreshTokensForLaunch(selectedAccount.uuid, msRefreshTokenFromConfig);
             if (refreshedData && refreshedData.mcAccessToken) {
                 currentMcAccessToken = refreshedData.mcAccessToken;
                 log.info(`Successfully refreshed Minecraft Access Token for ${selectedAccount.username}.`);
+                // selectedAccount의 이름이나 UUID도 refreshedData에서 가져온 값으로 업데이트 가능
+                // (단, ConfigManager가 이미 최신 정보로 업데이트했을 것임)
             } else {
                 throw new Error("Failed to refresh Minecraft Access Token (no token in response).");
             }
@@ -286,49 +280,60 @@ async function getAuthProfileForLaunch() {
     if (!currentMcAccessToken) throw new Error("Failed to obtain a valid Minecraft Access Token for launch.");
 
     return {
-        userType: 'msa',
-        accessToken: currentMcAccessToken,
-        selectedProfile: {
-            id: selectedAccount.uuid.replace(/-/g, ""),
-            name: selectedAccount.username,
+        userType: 'msa', // Microsoft 계정이므로 'msa'
+        accessToken: currentMcAccessToken, // Minecraft 게임 세션용 액세스 토큰
+        gameProfile: {
+            id: selectedAccount.uuid.replace(/-/g, ""), // 대시(-) 없는 UUID
+            name: selectedAccount.username,             // Minecraft 사용자 이름
         },
+        properties: {} // 일반적으로 비어있거나 '{}'. 필요시 채움.
     };
 }
 
 /**
  * 게임 실행
  * @param {string} versionIdToLaunch 실행할 버전 ID
- * @param {LaunchOption['user']} authProfile 인증 프로필
+ * @param {Pick<LaunchOption, 'gameProfile' | 'accessToken' | 'userType' | 'properties'>} authParams 인증 파라미터
  * @returns {Promise<import('child_process').ChildProcess>}
  */
-async function startGame(versionIdToLaunch, authProfile) {
-    log.info(`Attempting to launch Minecraft version: ${versionIdToLaunch} from ${MINECRAFT_ROOT_PATH}`);
-    const minecraftLocation = new MinecraftFolder(MINECRAFT_ROOT_PATH);
-    const currentJavaPath = await ensureJavaPath(minecraftLocation); // Java 경로 재확인/가져오기
+async function startGame(versionIdToLaunch, authParams) { // authProfile -> authParams
+    const mcRoot = getMinecraftRootPath();
+    log.info(`Attempting to launch Minecraft version: ${versionIdToLaunch} from ${mcRoot}`);
+    const minecraftLocation = new MinecraftFolder(mcRoot);
+    const currentJavaPath = await ensureJavaPath(minecraftLocation);
 
+    // LaunchOption 구성 (authParams를 직접 사용하여 user 관련 필드 채우기)
     const launchOptions = {
         version: versionIdToLaunch,
         gamePath: minecraftLocation.root,
         javaPath: currentJavaPath,
-        user: authProfile,
-        minMemory: 1024, // MB
-        maxMemory: Math.max(2048, Math.floor(os.freemem() / (1024 * 1024) * 0.5)), // 시스템 여유 메모리의 50% 또는 최소 2GB
-        // extraExecOption: { detached: os.platform() !== 'win32' }, // detached 옵션은 상황에 따라 조정
+        // --- 인증 관련 필드를 authParams에서 직접 가져와 설정 ---
+        userType: authParams.userType,
+        accessToken: authParams.accessToken,
+        gameProfile: authParams.gameProfile,
+        properties: authParams.properties,
+        // --- ---
+        minMemory: 1024,
+        maxMemory: Math.max(2048, Math.floor(os.freemem() / (1024 * 1024) * 0.5)),
+        extraExecOption: { detached: true, stdio: 'ignore' } // 이전 설정 유지
     };
 
     log.info('Launching Minecraft with options:', {
         ...launchOptions,
-        user: { ...authProfile, accessToken: "ACCESS_TOKEN_HIDDEN_IN_LOG" }
+        // 로그에는 민감 정보 (토큰) 숨기기 (선택적)
+        accessToken: launchOptions.accessToken ? "ACCESS_TOKEN_PRESENT_BUT_HIDDEN" : "NO_ACCESS_TOKEN",
+        gameProfile: launchOptions.gameProfile
     });
 
     const process = await launch(launchOptions); // @xmcl/core의 launch
 
     log.info(`Minecraft process started with PID: ${process.pid}`);
-
-    process.on('error', (err) => { log.error('Minecraft process error:', err); });
-    process.on('exit', (code, signal) => { log.info(`Minecraft process PID ${process.pid} exited with code ${code}, signal ${signal}`); });
-    process.stdout?.on('data', (data) => { log.info(`[MC OUT PID ${process.pid}]: ${data.toString().trim()}`); });
-    process.stderr?.on('data', (data) => { log.error(`[MC ERR PID ${process.pid}]: ${data.toString().trim()}`); });
+    if (process && typeof process.unref === 'function') {
+        process.unref();
+        log.info(`Minecraft process (PID: ${process.pid}) unref'd.`);
+    }
+    process.on('error', (err) => { log.error(`Minecraft process (PID: ${process.pid}) error:`, err); });
+    process.on('exit', (code, signal) => { log.info(`Minecraft process (PID: ${process.pid}) exited with code ${code}, signal ${signal}`); });
 
     return process;
 }
@@ -338,21 +343,23 @@ async function startGame(versionIdToLaunch, authProfile) {
 async function launchMinecraftGame() {
     try {
         log.info('Starting Minecraft launch sequence...');
-        const authProfile = await getAuthProfileForLaunch();
+        const authParams = await getAuthParametersForLaunch(); // 수정된 함수 호출
 
-        // 수정: ensureMinecraftAndForgeInstalled에 분리된 버전 정보 전달
         const versionIdToLaunch = await ensureMinecraftAndForgeInstalled(
-            MINECRAFT_VERSION_TARGET, // 바닐라 대상 버전
-            FORGE_MC_VERSION,         // 포지가 요구하는 MC 버전
-            FORGE_BUILD_VERSION       // 포지 순수 빌드 번호
+            MINECRAFT_VERSION_TARGET,
+            FORGE_MC_VERSION,
+            FORGE_BUILD_VERSION
         );
 
-        // ... (선택적 진단 및 startGame 호출은 이전과 동일) ...
-        await startGame(versionIdToLaunch, authProfile);
+        const mcProcess = await startGame(versionIdToLaunch, authParams); // 수정된 함수 호출
 
-        log.info('Minecraft launch process initiated successfully.');
-        return { success: true, message: 'Minecraft launch process initiated.' };
-
+        if (mcProcess && mcProcess.pid) {
+            log.info(`Minecraft process (PID: ${mcProcess.pid}) has been launched. Launcher will now exit.`);
+            return { success: true, message: 'Minecraft launched. Exiting launcher.', launchedPID: mcProcess.pid };
+        } else {
+            log.warn('Minecraft launch initiated, but PID not found.');
+            return { success: true, message: 'Minecraft launch initiated (PID unknown).', launchedPID: null };
+        }
     } catch (error) {
         log.error('Minecraft launch sequence failed:', error.message, error.stack);
         return { success: false, message: `게임 실행 실패: ${error.message}` };

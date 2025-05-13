@@ -15,11 +15,6 @@ const ConfigManager = require('./js/confighandler'); // ConfigManager 경로
 const autoUpdater = require('electron-updater').autoUpdater
 const { launchMinecraftGame } = require('./js/launch');
 
-// ConfigManager 로드 (앱 시작 시 한 번)
-if (!ConfigManager.isLoaded()) {
-    ConfigManager.load();
-}
-
 // --- 개발 중 핫 리로딩 ---
 if (process.env.NODE_ENV !== 'production') {
     log.info('Development mode detected. Hot reloading might be active if configured.');
@@ -549,17 +544,41 @@ ipcMain.on(MSFT_OPCODE.OPEN_LOGOUT, async (ipcEvent, uuid) => {
 ipcMain.handle('launch-minecraft', async () => {
     log.info('[IPC] Received request to launch Minecraft.');
     try {
-        await launchMinecraftGame();
-        return { success: true, message: 'Minecraft launch process initiated.' };
-    } catch (error) {
-        log.error('[IPC] Error launching Minecraft:', error);
-        return { success: false, message: error.message || 'Failed to launch Minecraft.' };
+        const launchResult = await launchMinecraftGame();
+        if (launchResult.success) {
+            log.info(`[IPC] ${launchResult.message}`);
+            // 마인크래프트가 성공적으로 시작되었으므로 런처 종료
+            app.quit();
+            return { success: true};
+        } else {
+            log.error('[IPC] Failed to launch Minecraft:', launchResult.message);
+            // 사용자에게 오류 메시지를 dialog로 보여주는 것이 좋음
+            dialog.showErrorBox('게임 실행 오류', launchResult.message);
+            return { success: false, message: launchResult.message };
+        }
+    } catch (error) { // launchMinecraftGame 내부에서 throw된 오류
+        log.error('[IPC] Critical error launching Minecraft:', error);
+        dialog.showErrorBox('게임 실행 중 심각한 오류', error.message || '알 수 없는 오류가 발생했습니다.');
+        return { success: false, message: error.message || 'Failed to launch Minecraft due to an unexpected error.' };
     }
 });
 
 // --- 앱 수명주기 이벤트 ---
 app.whenReady().then(async () => {
     log.info('App is ready.');
+
+    // <<<--- ConfigManager 초기화 및 로드 시점 변경 ---
+    try {
+        ConfigManager.initialize(); // 경로 초기화 및 필요한 경우 load 호출
+        log.info('[ConfigManager] Initialized successfully in app.whenReady()');
+    } catch (configError) {
+        log.error('[ConfigManager] Failed to initialize ConfigManager:', configError);
+        // 심각한 오류이므로 앱을 종료하거나 사용자에게 알림 후 종료
+        dialog.showErrorBox("설정 오류", `설정 파일을 초기화하는 중 심각한 오류가 발생했습니다: ${configError.message}\n앱을 종료합니다.`);
+        app.quit();
+        return; // 추가 실행 방지
+    }
+    // --- ---
 
     registerAutoUpdaterEvents(); // 이벤트 리스너는 한 번만 등록
     const initialAllowPrerelease = ConfigManager.getAllowPrerelease ? ConfigManager.getAllowPrerelease() : false;
