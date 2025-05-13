@@ -126,15 +126,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const launchGameButton = document.getElementById('launchGameButton');
     if (launchGameButton) {
-        launchGameButton.addEventListener('click', () => {
-            console.log('Launch game button clicked');
-            alert('게임 시작 기능은 아직 준비 중입니다.');
-            // TODO: 게임 시작 관련 IPC 호출 또는 로직 구현
-            // 예: window.electronAPI.launchGame();
+        launchGameButton.addEventListener('click', async () => {
+            console.log('[MainMenuJS] Launch game button clicked');
+            launchGameButton.disabled = true;
+            launchGameButton.textContent = '게임 실행 중...';
+
+            if (!window.electronAPI || typeof window.electronAPI.launchMinecraft !== 'function') {
+                alert('게임 실행 기능을 사용할 수 없습니다. (API 누락)');
+                launchGameButton.disabled = false;
+                launchGameButton.textContent = '게임 시작';
+                return;
+            }
+
+            try {
+                const result = await window.electronAPI.launchMinecraft();
+                if (result.success) {
+                    alert(result.message); // 또는 다른 UI 피드백
+                    // 게임 프로세스가 시작되었으므로, 버튼 텍스트는 그대로 두거나 변경할 수 있음
+                    // launchGameButton.textContent = '게임 실행됨';
+                } else {
+                    alert(`게임 실행 실패: ${result.message}`);
+                    launchGameButton.disabled = false;
+                    launchGameButton.textContent = '게임 시작';
+                }
+            } catch (error) {
+                console.error('[MainMenuJS] Error calling launchMinecraft API:', error);
+                alert(`게임 실행 중 오류 발생: ${error.message}`);
+                launchGameButton.disabled = false;
+                launchGameButton.textContent = '게임 시작';
+            }
         });
     }
-    // --- 다른 버튼 리스너 끝 ---
-
 });
 
 

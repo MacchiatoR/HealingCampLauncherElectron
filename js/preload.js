@@ -119,6 +119,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
         console.log('[Preload] Requesting to switch to login window.');
         ipcRenderer.send(WINDOW_CONTROL.SWITCH_TO_LOGIN_REQUEST);
     },
+
+    launchMinecraft: () => {
+        console.log('[Preload] Requesting to launch Minecraft.');
+        return ipcRenderer.invoke('launch-minecraft');
+    }
 });
 
 console.log('[Preload] electronAPI has been exposed to the window object.');

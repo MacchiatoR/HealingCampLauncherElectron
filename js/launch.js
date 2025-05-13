@@ -1,0 +1,364 @@
+
+// launch.js (또는 main.js의 일부)
+const { launch, Version, diagnose, LaunchOption, MinecraftFolder } = require('@xmcl/core');
+const {
+    installTask,
+    installForgeTask,
+    installDependenciesTask,
+    getVersionList,
+    getPotentialJavaLocations, // <<--- 추가
+    resolveJava,               // <<--- 추가
+    scanLocalJava,             // <<--- 추가 (또는 getSuitableJava와 유사한 더 고수준 함수가 있다면 그것 사용)
+    // DEFAULT_FORGE_MAVEN // 필요시 사용
+} = require('@xmcl/installer');
+const { getSuitableJava } = require('@xmcl/system'); // Java 경로 찾기
+// const { Task, TaskContext } = require('@xmcl/task'); // TaskContext는 startAndWait의 인자로 직접 객체 리터럴 사용 가능
+
+const path = require('path');
+const os = require('os');
+const fs = require('fs-extra');
+const { app } = require('electron');
+
+const ConfigManager = require('./confighandler'); // 가정: ConfigManager는 별도로 존재
+const AuthHandler = require('./authhandler');   // 가정: AuthHandler는 별도로 존재 (토큰 갱신 등)
+const { Dispatcher, Agent } = require('undici');
+const customAgent = new Agent({
+    connections: 4, // 동시 연결 수를 줄여봄 (기본값보다 작게, 예: 4 또는 8)
+    pipelining: 1, // 파이프라이닝도 줄여볼 수 있음
+    // connectTimeout: 30000, // 타임아웃 시간을 늘려볼 수도 있음 (기본 10초)
+});
+
+const log = {
+    info: (message, ...args) => console.log(`[GameLauncher] [INFO] ${new Date().toISOString()} ${message}`, ...args),
+    error: (message, ...args) => console.error(`[GameLauncher] [ERROR] ${new Date().toISOString()} ${message}`, ...args),
+    warn: (message, ...args) => console.warn(`[GameLauncher] [WARN] ${new Date().toISOString()} ${message}`, ...args),
+};
+
+// --- 설정 ---
+const MINECRAFT_VERSION_TARGET = '1.20.1';
+// 중요: 실제 사용할 정확한 포지 버전 문자열로 교체하세요. (예: '1.20.1-47.2.17')
+const FORGE_MC_VERSION = '1.20.1';
+const FORGE_BUILD_VERSION = '47.4.0';
+const MINECRAFT_ROOT_PATH = path.join(app.getPath('appData'), '.instance_HealingcampLauncher'); // 데이터 저장 경로
+let JAVA_PATH_CACHE = undefined; // Java 경로 캐시
+
+// --- Minecraft 루트 경로 지연 초기화 및 원하는 경로로 설정 ---
+let minecraftRootPathSingleton = null;
+function getMinecraftRootPath() { // <<--- 이 함수는 여기에 정의되어 있습니다.
+    if (!minecraftRootPathSingleton) {
+        // ... (경로 초기화 로직) ...
+        minecraftRootPathSingleton = path.join(app.getPath('appData'), '.instance_HealingcampLauncher');
+        log.info(`Minecraft root path initialized to: ${minecraftRootPathSingleton}`);
+    }
+    return minecraftRootPathSingleton;
+}
+
+/**
+ * Task 실행 및 진행률 로깅을 위한 헬퍼 함수
+ * @param {import('@xmcl/task').Task<any>} taskInstance 실행할 xmcl Task 객체
+ * @param {string} taskDescription 로깅을 위한 작업 설명
+ * @returns {Promise<any>} Task의 결과값
+ */
+async function runTaskWithProgress(taskInstance, taskDescription) {
+    log.info(`Starting task: ${taskDescription} (Path: ${taskInstance.path || 'N/A'})`);
+    let lastLoggedProgress = -1; // 마지막으로 로그된 진행률 (너무 잦은 로그 방지용)
+
+    try {
+        const result = await taskInstance.startAndWait({
+            onStart(task) {
+                log.info(` -> Sub-task started: ${task.name || 'Unnamed Subtask'} (Path: ${task.path})`);
+            },
+            onUpdate(task, chunkSize) {
+                const rootProgress = Math.round((taskInstance.progress / taskInstance.total) * 100);
+                if (taskInstance.total > 0 && rootProgress % 10 === 0 && rootProgress !== lastLoggedProgress) {
+                    log.info(` -> Overall task [${taskDescription}] progress: ${rootProgress}% (${taskInstance.progress} / ${taskInstance.total})`);
+                    lastLoggedProgress = rootProgress;
+                }
+            },
+            onFailed(task, error) {
+                log.error(` -> Sub-task failed: ${task.name || 'Unnamed Subtask'} (Path: ${task.path})`, error);
+            },
+            onSucceed(task, taskResult) {
+                log.info(` -> Sub-task succeeded: ${task.name || 'Unnamed Subtask'} (Path: ${task.path})`);
+            },
+        });
+        log.info(`Task completed: ${taskDescription}`);
+        return result; // Task의 최종 결과 반환
+    } catch (error) {
+        log.error(`Error during task execution [${taskDescription}]:`, error);
+        throw error; // 오류를 다시 던져 상위에서 처리하도록 함
+    }
+}
+
+/**
+ * 적절한 Java 경로를 찾거나 확인합니다.
+ * @param {MinecraftFolder} minecraftLocation 마인크래프트 폴더 객체
+ * @returns {Promise<string>} Java 실행 파일 경로
+ */
+async function ensureJavaPath(minecraftLocation) {
+    if (JAVA_PATH_CACHE && fs.existsSync(JAVA_PATH_CACHE)) {
+        log.info(`Using cached Java path: ${JAVA_PATH_CACHE}`);
+        return JAVA_PATH_CACHE;
+    }
+
+    log.info('Attempting to find suitable Java installation using @xmcl/installer...');
+    try {
+        // 방법 1: 잠재적 위치 스캔 후 첫 번째 유효한 Java 사용
+        const potentialLocations = await getPotentialJavaLocations();
+        log.info('Potential Java locations found:', potentialLocations);
+
+        if (potentialLocations && potentialLocations.length > 0) {
+            for (const loc of potentialLocations) {
+                try {
+                    const javaInfo = await resolveJava(loc); // 실행 파일 경로를 직접 받음
+                    if (javaInfo && javaInfo.path && javaInfo.version) { // javaInfo.version으로 버전도 확인 가능
+                        // 마인크래프트 1.20.1은 Java 17 이상 필요
+                        const majorVersion = parseInt(javaInfo.version.split('.')[0]);
+                        if (majorVersion >= 17) {
+                            JAVA_PATH_CACHE = javaInfo.path;
+                            log.info(`Found suitable Java at: ${JAVA_PATH_CACHE} (Version: ${javaInfo.version}, Major: ${majorVersion})`);
+                            return JAVA_PATH_CACHE;
+                        } else {
+                            log.warn(`Found Java at ${loc} but version ${javaInfo.version} (Major: ${majorVersion}) is less than 17.`);
+                        }
+                    }
+                } catch (resolveError) {
+                    log.warn(`Could not resolve Java at potential location ${loc}:`, resolveError.message);
+                }
+            }
+        }
+
+        // 방법 2: scanLocalJava 사용 (문서상 JAVA_HOME과 같은 디렉토리를 스캔한다고 되어 있음)
+        // 이 방법이 더 적합할 수 있으나, getPotentialJavaLocations와 어떻게 다른지 확인 필요.
+        // const scannedJava = await scanLocalJava([]); // 빈 배열을 주면 기본 위치를 스캔할 수도 있음 (문서 확인)
+        // if (scannedJava && scannedJava.length > 0) {
+        //     for (const javaInfo of scannedJava) {
+        //         if (javaInfo.version && parseInt(javaInfo.version.split('.')[0]) >= 17) {
+        //             JAVA_PATH_CACHE = javaInfo.path; // javaInfo.path가 실행 파일 경로인지 확인
+        //             log.info(`Found suitable Java via scanLocalJava: ${JAVA_PATH_CACHE} (Version: ${javaInfo.version})`);
+        //             return JAVA_PATH_CACHE;
+        //         }
+        //     }
+        // }
+
+
+        // 위 방법들로 못 찾았다면, 직접 지정된 경로 확인 (이 부분은 이제 불필요할 수 있음)
+        // if (process.env.JAVA_HOME) {
+        //     const javaHomePath = path.join(process.env.JAVA_HOME, 'bin', os.platform() === 'win32' ? 'java.exe' : 'java');
+        //     if (fs.existsSync(javaHomePath)) {
+        //         const javaInfo = await resolveJava(javaHomePath);
+        //         if (javaInfo && parseInt(javaInfo.version.split('.')[0]) >= 17) {
+        //             JAVA_PATH_CACHE = javaHomePath;
+        //             log.info(`Using Java from JAVA_HOME: ${JAVA_PATH_CACHE}`);
+        //             return JAVA_PATH_CACHE;
+        //         }
+        //     }
+        // }
+
+        throw new Error("Suitable Java installation (Version 17+) not found automatically.");
+
+    } catch (e) {
+        log.error("Error finding Java:", e);
+        // 사용자에게 Java 설치 경로를 수동으로 입력받는 UI를 제공하거나,
+        // Mojang JRE 설치 기능을 사용하는 것을 고려할 수 있음.
+        // await installJreFromMojang(...)
+        throw new Error("Could not find a suitable Java 17+ installation. Please install Java 17 or higher and ensure it's in your PATH, or configure the Java path manually.");
+    }
+}
+/**
+ * 마인크래프트 및 포지 설치/확인
+ * @param {string} targetMcVersion 바닐라 마인크래프트 버전
+ * @param {string} targetForgeMcVersion 포지가 대상하는 마인크래프트 버전 (예: "1.20.1")
+ * @param {string} targetForgeBuild 포지 빌드 번호 (예: "47.2.0")
+ * @returns {Promise<string>} 실행할 최종 버전 ID
+ */
+async function ensureMinecraftAndForgeInstalled(targetMcVersion, targetForgeMcVersion, targetForgeBuild) {
+    const mcRoot = getMinecraftRootPath();
+    log.info(`Ensuring Minecraft ${targetMcVersion} ${targetForgeBuild ? `with Forge (MC: ${targetForgeMcVersion}, ForgeBuild: ${targetForgeBuild})` : ''} is installed at ${mcRoot}...`);
+    const minecraftLocation = new MinecraftFolder(mcRoot);
+    await fs.ensureDir(minecraftLocation.root);
+
+    const currentJavaPath = await ensureJavaPath(minecraftLocation);
+
+    // 1. 바닐라 마인크래프트 설치 (이전과 동일)
+    const versionList = await getVersionList();
+    const vanillaVersionMeta = versionList.versions.find(v => v.id === targetMcVersion);
+    if (!vanillaVersionMeta) throw new Error(`Vanilla Minecraft version metadata for ${targetMcVersion} not found.`);
+    log.info(`Checking/Installing Vanilla Minecraft ${targetMcVersion}...`);
+    const vanillaInstallOp = installTask(vanillaVersionMeta, minecraftLocation, { side: 'client' });
+    const resolvedVanillaVersion = await runTaskWithProgress(vanillaInstallOp, `Install Vanilla ${targetMcVersion}`);
+    log.info(`Vanilla Minecraft ${targetMcVersion} installed/verified. Resolved ID: ${resolvedVanillaVersion.id}`);
+    let versionIdToLaunch = resolvedVanillaVersion.id;
+
+    // 2. 포지 설치 (targetForgeBuild가 제공된 경우)
+    if (targetForgeMcVersion && targetForgeBuild) {
+        // installForgeTask의 첫 번째 인자로 RequiredVersion 객체 전달
+        // installer 정보를 제공하지 않으면 xmcl이 기본 Maven 저장소에서 찾으려고 시도합니다.
+        const forgeVersionMetaForTask = {
+            mcversion: targetForgeMcVersion, // 예: "1.20.1"
+            version: targetForgeBuild,     // 예: "47.2.0"
+            // installer: undefined, // 또는 특정 installer 정보가 있다면 여기에 객체로 제공
+                                   // { path: 'maven/net/minecraftforge/forge/1.20.1-47.2.0/forge-1.20.1-47.2.0-installer.jar', sha1: '...' }
+                                   // 이 정보는 getForgeVersionList()가 반환하는 ForgeVersion 객체의 installer 속성에 해당합니다.
+                                   // 이 정보가 없으면 xmcl이 URL을 추론합니다.
+        };
+
+        const forgeInstallOptions = {
+            minecraft: minecraftLocation,
+            java: currentJavaPath,
+        };
+
+        log.info(`Checking/Installing Forge (MC: ${targetForgeMcVersion}, ForgeBuild: ${targetForgeBuild})...`);
+        log.info('Forge Install Task Input (versionMeta):', forgeVersionMetaForTask);
+        log.info('Forge Install Options (otherOptions):', forgeInstallOptions);
+
+        const forgeInstallOp = installForgeTask(forgeVersionMetaForTask, minecraftLocation, forgeInstallOptions);
+        const installedForgeId = await runTaskWithProgress(forgeInstallOp, `Install Forge ${targetForgeMcVersion}-${targetForgeBuild}`);
+        log.info(`Forge installation task completed. Installed Forge version ID: ${installedForgeId}`);
+
+        log.info(`Ensuring dependencies for installed Forge version: ${installedForgeId}...`);
+        const resolvedForgeVersionAfterInstall = await Version.parse(minecraftLocation, installedForgeId);
+        const depsInstallOp = installDependenciesTask(resolvedForgeVersionAfterInstall, { side: 'client' });
+        await runTaskWithProgress(depsInstallOp, `Install Dependencies for ${installedForgeId}`);
+
+        log.info(`Forge ${installedForgeId} and its dependencies are installed.`);
+        versionIdToLaunch = installedForgeId;
+    } else {
+        // 바닐라만 설치하는 경우 종속성 확인
+        log.info(`Ensuring dependencies for Vanilla version: ${resolvedVanillaVersion.id}...`);
+        const vanillaDepsOp = installDependenciesTask(resolvedVanillaVersion, { side: 'client' });
+        await runTaskWithProgress(vanillaDepsOp, `Install Dependencies for Vanilla ${resolvedVanillaVersion.id}`);
+    }
+    return versionIdToLaunch;
+}
+
+
+
+/**
+ * 실행에 필요한 인증 프로필 가져오기
+ * @returns {Promise<LaunchOption['user']>} LaunchOption에 맞는 user 객체
+ */
+async function getAuthProfileForLaunch() {
+    // 이 함수는 이전 답변에서 ConfigManager와 AuthHandler를 사용하여 구현한 것을 그대로 사용하거나,
+    // xmcl/user와 xmcl/microsoft-constructor를 사용하도록 수정할 수 있습니다.
+    // 여기서는 이전 답변의 로직을 사용한다고 가정합니다.
+    log.info("Attempting to get selected account from ConfigManager...");
+    const selectedAccount = ConfigManager.getSelectedAccount();
+
+    log.info("Selected account object from ConfigManager:", JSON.stringify(selectedAccount, null, 2));
+
+    if (!selectedAccount || typeof selectedAccount.username !== 'string' || typeof selectedAccount.uuid !== 'string' ||
+        selectedAccount.type !== 'microsoft' || typeof selectedAccount.accessToken !== 'string' || // mcAccessToken
+        typeof selectedAccount.expiresAt !== 'number' || // mcAccessTokenExpiresAt
+        !selectedAccount.microsoft || typeof selectedAccount.microsoft.refresh_token !== 'string') { // msRefreshToken
+        const msg = "Selected Microsoft account information is invalid or missing required fields. Please login again.";
+        log.error(msg, selectedAccount);
+        throw new Error(msg);
+    }
+
+    log.info(`Selected account for launch: ${selectedAccount.username} (UUID: ${selectedAccount.uuid})`);
+
+    let currentMcAccessToken = selectedAccount.accessToken;
+    const mcTokenExpiresAt = selectedAccount.expiresAt;
+    const msRefreshToken = selectedAccount.microsoft.refresh_token;
+    const now = Date.now();
+    const fiveMinutesInMs = 5 * 60 * 1000;
+
+    if (!currentMcAccessToken || !mcTokenExpiresAt || mcTokenExpiresAt - fiveMinutesInMs < now) {
+        log.warn(`Minecraft Access Token for ${selectedAccount.username} is missing or needs refresh. Attempting refresh...`);
+        if (!msRefreshToken) throw new Error("Cannot refresh MC Token: MS Refresh Token is missing.");
+        try {
+            const refreshedData = await AuthHandler.refreshTokensForLaunch(selectedAccount.uuid, msRefreshToken);
+            if (refreshedData && refreshedData.mcAccessToken) {
+                currentMcAccessToken = refreshedData.mcAccessToken;
+                log.info(`Successfully refreshed Minecraft Access Token for ${selectedAccount.username}.`);
+            } else {
+                throw new Error("Failed to refresh Minecraft Access Token (no token in response).");
+            }
+        } catch (error) {
+            log.error(`Error refreshing tokens for ${selectedAccount.username}:`, error);
+            throw new Error(`Token refresh failed: ${error.message || 'Unknown error'}. Please try logging in again.`);
+        }
+    } else {
+        log.info(`Using existing valid Minecraft Access Token for ${selectedAccount.username}.`);
+    }
+
+    if (!currentMcAccessToken) throw new Error("Failed to obtain a valid Minecraft Access Token for launch.");
+
+    return {
+        userType: 'msa',
+        accessToken: currentMcAccessToken,
+        selectedProfile: {
+            id: selectedAccount.uuid.replace(/-/g, ""),
+            name: selectedAccount.username,
+        },
+    };
+}
+
+/**
+ * 게임 실행
+ * @param {string} versionIdToLaunch 실행할 버전 ID
+ * @param {LaunchOption['user']} authProfile 인증 프로필
+ * @returns {Promise<import('child_process').ChildProcess>}
+ */
+async function startGame(versionIdToLaunch, authProfile) {
+    log.info(`Attempting to launch Minecraft version: ${versionIdToLaunch} from ${MINECRAFT_ROOT_PATH}`);
+    const minecraftLocation = new MinecraftFolder(MINECRAFT_ROOT_PATH);
+    const currentJavaPath = await ensureJavaPath(minecraftLocation); // Java 경로 재확인/가져오기
+
+    const launchOptions = {
+        version: versionIdToLaunch,
+        gamePath: minecraftLocation.root,
+        javaPath: currentJavaPath,
+        user: authProfile,
+        minMemory: 1024, // MB
+        maxMemory: Math.max(2048, Math.floor(os.freemem() / (1024 * 1024) * 0.5)), // 시스템 여유 메모리의 50% 또는 최소 2GB
+        // extraExecOption: { detached: os.platform() !== 'win32' }, // detached 옵션은 상황에 따라 조정
+    };
+
+    log.info('Launching Minecraft with options:', {
+        ...launchOptions,
+        user: { ...authProfile, accessToken: "ACCESS_TOKEN_HIDDEN_IN_LOG" }
+    });
+
+    const process = await launch(launchOptions); // @xmcl/core의 launch
+
+    log.info(`Minecraft process started with PID: ${process.pid}`);
+
+    process.on('error', (err) => { log.error('Minecraft process error:', err); });
+    process.on('exit', (code, signal) => { log.info(`Minecraft process PID ${process.pid} exited with code ${code}, signal ${signal}`); });
+    process.stdout?.on('data', (data) => { log.info(`[MC OUT PID ${process.pid}]: ${data.toString().trim()}`); });
+    process.stderr?.on('data', (data) => { log.error(`[MC ERR PID ${process.pid}]: ${data.toString().trim()}`); });
+
+    return process;
+}
+
+
+// --- 메인 실행 함수 ---
+async function launchMinecraftGame() {
+    try {
+        log.info('Starting Minecraft launch sequence...');
+        const authProfile = await getAuthProfileForLaunch();
+
+        // 수정: ensureMinecraftAndForgeInstalled에 분리된 버전 정보 전달
+        const versionIdToLaunch = await ensureMinecraftAndForgeInstalled(
+            MINECRAFT_VERSION_TARGET, // 바닐라 대상 버전
+            FORGE_MC_VERSION,         // 포지가 요구하는 MC 버전
+            FORGE_BUILD_VERSION       // 포지 순수 빌드 번호
+        );
+
+        // ... (선택적 진단 및 startGame 호출은 이전과 동일) ...
+        await startGame(versionIdToLaunch, authProfile);
+
+        log.info('Minecraft launch process initiated successfully.');
+        return { success: true, message: 'Minecraft launch process initiated.' };
+
+    } catch (error) {
+        log.error('Minecraft launch sequence failed:', error.message, error.stack);
+        return { success: false, message: `게임 실행 실패: ${error.message}` };
+    }
+}
+
+module.exports = {
+    launchMinecraftGame,
+};

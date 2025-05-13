@@ -13,7 +13,7 @@ remoteMain.initialize()
 const AuthManager = require('./js/authhandler'); // AuthManager 경로
 const ConfigManager = require('./js/confighandler'); // ConfigManager 경로
 const autoUpdater = require('electron-updater').autoUpdater
-const semver = require('semver')
+const { launchMinecraftGame } = require('./js/launch');
 
 // ConfigManager 로드 (앱 시작 시 한 번)
 if (!ConfigManager.isLoaded()) {
@@ -542,6 +542,19 @@ ipcMain.on(MSFT_OPCODE.OPEN_LOGOUT, async (ipcEvent, uuid) => {
 
     msftLogoutWindow.removeMenu()
     msftLogoutWindow.loadURL('https://login.microsoftonline.com/common/oauth2/v2.0/logout')
+});
+
+
+// 게임 시작 요청 IPC 핸들러
+ipcMain.handle('launch-minecraft', async () => {
+    log.info('[IPC] Received request to launch Minecraft.');
+    try {
+        await launchMinecraftGame();
+        return { success: true, message: 'Minecraft launch process initiated.' };
+    } catch (error) {
+        log.error('[IPC] Error launching Minecraft:', error);
+        return { success: false, message: error.message || 'Failed to launch Minecraft.' };
+    }
 });
 
 // --- 앱 수명주기 이벤트 ---
