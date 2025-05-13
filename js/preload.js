@@ -123,7 +123,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     launchMinecraft: () => {
         console.log('[Preload] Requesting to launch Minecraft.');
         return ipcRenderer.invoke('launch-minecraft');
-    }
+    },
+
+    getLauncherSettings: () => ipcRenderer.invoke('settings:get-all'),
+    saveLauncherSettings: (settings) => ipcRenderer.invoke('settings:save-all', settings),
 });
 
 console.log('[Preload] electronAPI has been exposed to the window object.');

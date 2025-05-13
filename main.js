@@ -563,6 +563,50 @@ ipcMain.handle('launch-minecraft', async () => {
     }
 });
 
+ipcMain.handle('settings:get-all', async () => {
+    if (!ConfigManager.isLoaded()) { // 로드되었는지 확인
+        try {
+            ConfigManager.initialize(); // 로드 안됐으면 초기화 시도
+        } catch (e) {
+            log.error('Failed to initialize ConfigManager in settings:get-all:', e);
+            return null; // 또는 오류 객체 반환
+        }
+    }
+    const currentConfig = ConfigManager.getConfig();
+    if (currentConfig && currentConfig.settings) {
+        return { // 필요한 설정만 골라서 반환하는 것이 더 좋음
+            maxMemoryMB: currentConfig.settings.game.maxMemoryMB || 6144,
+            minMemoryMB: currentConfig.settings.game.minMemoryMB || 2048, // minMemoryMB도 추가
+            resWidth: currentConfig.settings.game.resWidth || 1920,
+            resHeight: currentConfig.settings.game.resHeight || 1080,
+            fullscreen: typeof currentConfig.settings.game.fullscreen === 'boolean' ? currentConfig.settings.game.fullscreen : false,
+            allowPrerelease: typeof currentConfig.settings.launcher.allowPrerelease === 'boolean' ? currentConfig.settings.launcher.allowPrerelease : false,
+        };
+    }
+    return null; // 또는 기본 설정 객체 반환
+});
+
+ipcMain.handle('settings:save-all', async (event, settings) => {
+    if (!ConfigManager.isLoaded()) { /* ... 로드 확인 및 초기화 ... */ }
+    const cfg = ConfigManager.getConfig();
+    if (cfg && cfg.settings && cfg.settings.game && cfg.settings.launcher) {
+        if (typeof settings.maxMemoryMB === 'number') cfg.settings.game.maxMemoryMB = settings.maxMemoryMB;
+        if (typeof settings.minMemoryMB === 'number') cfg.settings.game.minMemoryMB = settings.minMemoryMB; // minMemoryMB 저장
+        if (typeof settings.resWidth === 'number') cfg.settings.game.resWidth = settings.resWidth;
+        if (typeof settings.resHeight === 'number') cfg.settings.game.resHeight = settings.resHeight;
+        if (typeof settings.fullscreen === 'boolean') cfg.settings.game.fullscreen = settings.fullscreen;
+        if (typeof settings.allowPrerelease === 'boolean') cfg.settings.launcher.allowPrerelease = settings.allowPrerelease;
+        await ConfigManager.save();
+        // 변경된 설정을 autoUpdater에도 반영 (allowPrerelease)
+        if (typeof settings.allowPrerelease === 'boolean') {
+            configureAutoUpdater(settings.allowPrerelease); // autoUpdater 재설정
+            log.info(`[AutoUpdater] Reconfigured with allowPrerelease: ${settings.allowPrerelease}`);
+        }
+        return { success: true };
+    }
+    return { success: false, error: 'Failed to access config object for saving.' };
+});
+
 // --- 앱 수명주기 이벤트 ---
 app.whenReady().then(async () => {
     log.info('App is ready.');

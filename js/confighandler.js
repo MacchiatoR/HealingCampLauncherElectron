@@ -33,7 +33,15 @@ function initializePaths() {
 
 const DEFAULT_CONFIG = {
     settings: {
-        game: { resWidth: 1280, resHeight: 720, fullscreen: false, autoConnect: true, launchDetached: true },
+        game: { 
+            resWidth: 1920, 
+            resHeight: 1080, 
+            fullscreen: false, 
+            autoConnect: true, 
+            launchDetached: true, 
+            minMemoryMB: 6144, // <<--- 추가: 기본 최소 메모리
+            maxMemoryMB: 6144  // <<--- 추가: 기본 최대 메모리},
+        },
         launcher: { allowPrerelease: false, dataDirectory: null } // dataDirectory는 동적으로 설정
     },
     newsCache: { date: null, content: null, dismissed: false },
@@ -253,3 +261,15 @@ exports.initialize = function() {
     }
 };
     
+/**
+ * 현재 설정(config) 객체 전체를 반환합니다.
+ * 주의: 반환된 객체를 직접 수정하면 원본 config가 변경될 수 있습니다.
+ * 읽기 전용으로 사용하거나, 필요시 깊은 복사하여 사용하세요.
+ * @returns {object | null} config 객체 또는 null
+ */
+exports.getConfig = function() {
+    if (!config) {
+        logger.warn('getConfig: Config not loaded yet.');
+    }
+    return config;
+};
