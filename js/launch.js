@@ -31,6 +31,7 @@ const FORGE_MC_VERSION = '1.20.1';
 const FORGE_BUILD_VERSION = '47.4.0';
 const MINECRAFT_ROOT_PATH = path.join(app.getPath('appData'), '.instance_HealingcampLauncher'); // 데이터 저장 경로
 let JAVA_PATH_CACHE = undefined; 
+let targetWindowForProgress = null;
 
 // --- 리소스 업데이트 설정 ---
 const RESOURCE_VERSION_URL = 'https://www.dropbox.com/scl/fi/pl5l3q11squqmmqjsidqd/version_NarangNorang.txt?rlkey=2uycyf890dlgrzt8mlu5urglf&st=u75kw5s9&dl=1'; // 예: https://example.com/game_resources/version.txt
@@ -97,44 +98,139 @@ async function runTaskWithProgress(taskInstance, taskDescription) {
 async function ensureJavaPath(minecraftLocation) {
     if (JAVA_PATH_CACHE && fs.existsSync(JAVA_PATH_CACHE)) {
         log.info(`Using cached Java path: ${JAVA_PATH_CACHE}`);
-        return JAVA_PATH_CACHE;
+        if (JAVA_PATH_CACHE) return JAVA_PATH_CACHE;
     }
+    JAVA_PATH_CACHE = undefined;
 
-    log.info('Attempting to find suitable Java installation using @xmcl/installer...');
-    try {
-        // 방법 1: 잠재적 위치 스캔 후 첫 번째 유효한 Java 사용
-        const potentialLocations = await getPotentialJavaLocations();
-        log.info('Potential Java locations found:', potentialLocations);
+    log.info('Attempting to find suitable Java installation (Version 17+)...');
+    let foundJavaPath = null;
 
-        if (potentialLocations && potentialLocations.length > 0) {
-            for (const loc of potentialLocations) {
-                try {
-                    const javaInfo = await resolveJava(loc); // 실행 파일 경로를 직접 받음
-                    if (javaInfo && javaInfo.path && javaInfo.version) { // javaInfo.version으로 버전도 확인 가능
-                        // 마인크래프트 1.20.1은 Java 17 이상 필요
-                        const majorVersion = parseInt(javaInfo.version.split('.')[0]);
-                        if (majorVersion >= 17) {
-                            JAVA_PATH_CACHE = javaInfo.path;
-                            log.info(`Found suitable Java at: ${JAVA_PATH_CACHE} (Version: ${javaInfo.version}, Major: ${majorVersion})`);
-                            return JAVA_PATH_CACHE;
-                        } else {
-                            log.warn(`Found Java at ${loc} but version ${javaInfo.version} (Major: ${majorVersion}) is less than 17.`);
-                        }
-                    }
-                } catch (resolveError) {
-                    log.warn(`Could not resolve Java at potential location ${loc}:`, resolveError.message);
+    // 개선된 버전 파싱 함수
+    const parseMajorJavaVersion = (versionString) => {
+        if (!versionString || typeof versionString !== 'string') return 0;
+        // "17.0.1+9", "21-ea", "1.8.0_291" 등 다양한 형식 처리
+        const match = versionString.match(/^(\d+)(\.\d+)*([.-_]\d+)*([+-].*)?$/);
+        if (!match) return 0;
+        let major = parseInt(match[1]) || 0;
+        // 1.8.x 같은 형식 처리
+        if (major === 1 && versionString.startsWith('1.')) {
+            const parts = versionString.split(/[.-_]/);
+            major = parseInt(parts[1]) || 0;
+        }
+        return major;
+    };
+
+    // Java 경로를 테스트하는 헬퍼 함수
+    const testJavaPath = async (javaExePath, source) => {
+        if (!fs.existsSync(javaExePath)) {
+            log.warn(`Java executable not found at ${javaExePath} (Source: ${source})`);
+            return null;
+        }
+        try {
+            log.info(`Testing Java at: ${javaExePath} (Source: ${source})`);
+            const javaInfo = await resolveJava(javaExePath);
+            if (javaInfo && javaInfo.path && javaInfo.version) {
+                const majorVersion = parseMajorJavaVersion(javaInfo.version);
+                log.info(`Resolved Java: Path=${javaInfo.path}, Version=${javaInfo.version}, Major=${majorVersion}`);
+                if (majorVersion >= 17) {
+                    log.info(`Found SUITABLE Java: Path=${javaInfo.path}, Version=${javaInfo.version} (Source: ${source})`);
+                    return javaInfo.path;
+                } else {
+                    log.warn(`Java at ${javaInfo.path} has version ${javaInfo.version} (Major ${majorVersion}) < 17 (Source: ${source})`);
                 }
+            } else {
+                log.warn(`Java at ${javaExePath} resolved but missing path/version info: ${JSON.stringify(javaInfo)} (Source: ${source})`);
+            }
+        } catch (e) {
+            log.warn(`Failed to resolve Java at ${javaExePath}: ${e.message} (Source: ${source})`);
+        }
+        return null;
+    };
+
+    try {
+        // 1. @xmcl/installer로 잠재적 Java 위치 탐색
+        const potentialLocations = await getPotentialJavaLocations();
+        if (potentialLocations && potentialLocations.length > 0) {
+            log.info('Potential Java locations from @xmcl/installer:', potentialLocations);
+            for (const loc of potentialLocations) {
+                let javaExeToTest = loc;
+                if (!loc.toLowerCase().endsWith('java.exe') && !loc.toLowerCase().endsWith('java')) {
+                    const platformSpecificPath = process.platform === 'win32' ? path.join(loc, 'bin', 'java.exe') : path.join(loc, 'bin', 'java');
+                    if (fs.existsSync(platformSpecificPath)) {
+                        javaExeToTest = platformSpecificPath;
+                    } else {
+                        const rootJavaExe = process.platform === 'win32' ? path.join(loc, 'java.exe') : path.join(loc, 'java');
+                        if (fs.existsSync(rootJavaExe)) javaExeToTest = rootJavaExe;
+                    }
+                }
+                foundJavaPath = await testJavaPath(javaExeToTest, '@xmcl/installer');
+                if (foundJavaPath) break;
+            }
+        } else {
+            log.warn('No potential Java locations found by @xmcl/installer.');
+        }
+
+        // 2. JAVA_HOME 환경 변수 확인
+        if (!foundJavaPath) {
+            const javaHome = process.env.JAVA_HOME;
+            if (javaHome) {
+                const javaExePath = process.platform === 'win32' ? path.join(javaHome, 'bin', 'java.exe') : path.join(javaHome, 'bin', 'java');
+                foundJavaPath = await testJavaPath(javaExePath, 'JAVA_HOME');
+            } else {
+                log.info('JAVA_HOME environment variable is not set.');
             }
         }
 
-        throw new Error("Suitable Java installation (Version 17+) not found automatically.");
+        // 3. 시스템 PATH에서 Java 탐색
+        if (!foundJavaPath) {
+            const pathEnv = process.env.PATH || process.env.Path || '';
+            const pathEntries = pathEnv.split(process.platform === 'win32' ? ';' : ':');
+            for (const entry of pathEntries) {
+                if (!entry) continue;
+                const javaExePath = process.platform === 'win32' ? path.join(entry, 'java.exe') : path.join(entry, 'java');
+                foundJavaPath = await testJavaPath(javaExePath, 'System PATH');
+                if (foundJavaPath) break;
+            }
+        }
+
+        // 4. 일반적인 Java 설치 경로 확인
+        if (!foundJavaPath) {
+            const commonLocations = [];
+            if (process.platform === 'win32') {
+                commonLocations.push('C:\\Program Files\\Java', 'C:\\Program Files (x86)\\Java');
+            } else if (process.platform === 'darwin') {
+                commonLocations.push('/Library/Java/JavaVirtualMachines', '/usr/lib/jvm');
+            } else {
+                commonLocations.push('/usr/lib/jvm', '/opt/java');
+            }
+
+            for (const baseDir of commonLocations) {
+                if (!fs.existsSync(baseDir)) continue;
+                const subDirs = fs.readdirSync(baseDir, { withFileTypes: true })
+                    .filter(dirent => dirent.isDirectory())
+                    .map(dirent => path.join(baseDir, dirent.name));
+                for (const subDir of subDirs) {
+                    const javaExePath = process.platform === 'win32' ? path.join(subDir, 'bin', 'java.exe') : path.join(subDir, 'bin', 'java');
+                    foundJavaPath = await testJavaPath(javaExePath, `Common Location (${baseDir})`);
+                    if (foundJavaPath) break;
+                }
+                if (foundJavaPath) break;
+            }
+        }
+
+        if (foundJavaPath) {
+            JAVA_PATH_CACHE = foundJavaPath;
+            return foundJavaPath;
+        }
+
+        log.error("Suitable Java installation (Version 17+) not found after exhaustive search.");
+        throw new Error("Could not find a suitable Java 17+ installation. Please install Java 17 or higher and ensure it's in your PATH, or configure the Java path manually.");
 
     } catch (e) {
-        log.error("Error finding Java:", e);
-        // 사용자에게 Java 설치 경로를 수동으로 입력받는 UI를 제공하거나,
-        // Mojang JRE 설치 기능을 사용하는 것을 고려할 수 있음.
-        // await installJreFromMojang(...)
-        throw new Error("Could not find a suitable Java 17+ installation. Please install Java 17 or higher and ensure it's in your PATH, or configure the Java path manually.");
+        log.error(`Error during Java path detection: ${e.message}`);
+        if (e.stack) log.error("Stack trace for Java detection error:", e.stack);
+        if (e.message.includes("Could not find a suitable Java 17+")) throw e;
+        throw new Error(`Java detection failed: ${e.message}. Please ensure Java 17+ is installed and accessible.`);
     }
 }
 
@@ -409,19 +505,10 @@ async function startGame(versionIdToLaunch, authParams) {
 
 // --- 진행률 업데이트 IPC 전송 함수 ---
 function sendProgressUpdate(eventChannel, data) {
-    // 현재 활성화된 모든 렌더러 창에 메시지를 보낼 수 있지만,
-    // 보통은 특정 런처 창에만 보내야 합니다.
-    // main.js에서 BrowserWindow 인스턴스를 launch.js로 넘겨주거나,
-    // 전역에서 접근 가능한 형태로 관리해야 합니다.
-    // 여기서는 mainWindow가 전역적으로 또는 모듈 인자로 전달되었다고 가정합니다.
-
-    // 예시: mainWindow가 launch.js로 전달되었다고 가정
-    // 이 부분은 실제 Electron 애플리케이션 구조에 맞게 수정해야 합니다.
-    const focusedWindow = BrowserWindow.getFocusedWindow(); // 또는 특정 ID의 창
-    if (focusedWindow) {
-        focusedWindow.webContents.send(eventChannel, data);
+    if (targetWindowForProgress && !targetWindowForProgress.isDestroyed()) {
+        targetWindowForProgress.webContents.send(eventChannel, data);
     } else {
-        log.warn(`[GameLauncher - sendProgressUpdate] No focused window found to send IPC message on channel: ${eventChannel}`);
+        log.warn(`[GameLauncher - sendProgressUpdate] Target window for progress is not available or destroyed. Channel: ${eventChannel}`);
     }
 }
 
@@ -510,7 +597,14 @@ async function runTaskWithProgress(taskInstance, taskDescription, baseProgress, 
     }
 }
 // --- 메인 실행 함수 ---
-async function launchMinecraftGame() {
+async function launchMinecraftGame(windowToUpdate) {
+    if (!windowToUpdate || typeof windowToUpdate.webContents?.send !== 'function') {
+        log.error('[launchMinecraftGame] Invalid window object provided for progress updates.');
+        // 오류 처리가 필요합니다. 여기서는 간단히 로그만 남기고 진행하지만,
+        // 실제로는 오류를 throw하거나, 진행률 업데이트 없이 진행할지 결정해야 합니다.
+    }
+    targetWindowForProgress = windowToUpdate; // 함수 스코프 변수에 할당
+    
     sendProgressUpdate('launch-progress-start', { title: '게임 실행 준비' });
     let overallProgress = 0;
 

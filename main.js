@@ -1,11 +1,6 @@
 // main.js
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
-const log = {
-    info: (message, ...args) => console.log(`[INFO] ${new Date().toISOString()} [WindowManager] ${message}`, ...args),
-    error: (message, ...args) => console.error(`[ERROR] ${new Date().toISOString()} [WindowManager] ${message}`, ...args),
-    warn: (message, ...args) => console.warn(`[WARN] ${new Date().toISOString()} [WindowManager] ${message}`, ...args), 
-};
 const remoteMain = require('@electron/remote/main')
 remoteMain.initialize()
 
@@ -14,6 +9,11 @@ const AuthManager = require('./js/authhandler'); // AuthManager 경로
 const ConfigManager = require('./js/confighandler'); // ConfigManager 경로
 const autoUpdater = require('electron-updater').autoUpdater
 const { launchMinecraftGame } = require('./js/launch');
+const log = require('electron-log');
+log.transports.file.level = 'info'
+log.transports.console.level = 'info';
+console.log(`Log file will be written to: ${log.transports.file.getFile().path}`);
+Object.assign(console, log.functions);
 
 // --- 개발 중 핫 리로딩 ---
 if (process.env.NODE_ENV !== 'production') {
@@ -88,11 +88,9 @@ function registerAutoUpdaterEvents() {
     });
 
     autoUpdater.on('update-not-available', (info) => {
-        log.info('[AutoUpdater] Event: update-not-available.', info);
-        if (updaterEventSender && !updaterEventSender.isDestroyed()) {
-            updaterEventSender.send('autoUpdateNotification', 'update-not-available', info);
-        }
-        proceedToLoginWindow(); // 업데이트 없으면 로그인 창으로 진행
+        log.info('[AutoUpdater] Event: update-not-available. Info:', JSON.stringify(info, null, 2));
+        log.info('[AutoUpdater] Calling proceedToLoginWindow() from update-not-available handler.'); // <<<--- 로그 추가
+        proceedToLoginWindow();
     });
 
     autoUpdater.on('error', (err) => {
@@ -175,44 +173,81 @@ function configureAutoUpdater(allowPrereleaseSetting) {
 }
 
 function checkForInitialUpdates() {
-     log.info('[AutoUpdater] Starting initial check for updates.');
+    log.info('[AutoUpdater] Starting initial check for updates. isDev:', isDev);
     autoUpdater.checkForUpdates()
         .then(updateCheckResult => {
-            log.info('[AutoUpdater] Initial checkForUpdates() promise resolved. Result:', updateCheckResult);
+            // <<<--- 이 부분의 로그가 중요! ---
+            log.info('[AutoUpdater] Initial checkForUpdates() promise resolved. Result (raw):', updateCheckResult);
+            // updateCheckResult가 객체일 수 있으므로, 내부를 자세히 보기 위해 JSON.stringify 사용
+            try {
+                log.info('[AutoUpdater] Initial checkForUpdates() promise resolved. Result (JSON):', JSON.stringify(updateCheckResult, null, 2));
+            } catch (e) {
+                log.warn('[AutoUpdater] Could not stringify updateCheckResult:', e.message);
+            }
+            // --- 여기까지 ---
 
             let proceed = false;
-            if (isDev && !autoUpdater.forceDevUpdateConfig) { // 방법 1의 forceDevUpdateConfig가 설정되지 않았거나 효과 없을 때
-                // 개발 환경이고, dev-app-update.yml 강제 사용 설정이 안 되어 있다면
-                // "Skip checkForUpdates..." 메시지와 함께 이벤트가 발생 안 할 수 있음.
-                // 이 경우 updateCheckResult가 특정 값을 가질 수 있음 (예: null 또는 업데이트 확인 건너뜀 정보)
-                // 명시적으로 로그를 확인하고 해당 조건에 맞춰 로그인으로 진행.
-                // 예시: 만약 'Skip checkForUpdates...' 메시지가 항상 updateCheckResult.cancellationToken을 반환한다면
+            const currentAppVersion = app.getVersion();
+            log.info(`[AutoUpdater] Current app version: ${currentAppVersion}`);
+
+            if (isDev && !autoUpdater.forceDevUpdateConfig) {
+                log.info('[AutoUpdater] Dev check branch entered.');
                 if (updateCheckResult && updateCheckResult.cancellationToken && updateCheckResult.cancellationToken.reason && updateCheckResult.cancellationToken.reason.includes('application is not packed')) {
-                    log.warn("[AutoUpdater] Update check skipped in dev (not packed, no force config). Proceeding to login.");
+                    log.warn("[AutoUpdater] Dev: Update check skipped (not packed, no force config). Setting proceed = true.");
                     proceed = true;
+                } else {
+                    log.info('[AutoUpdater] Dev: Condition for "not packed" not met.');
                 }
             }
             
-            // 일반적인 "업데이트 없음" 시나리오 (프로덕션 또는 forceDevUpdateConfig=true인 dev)
-            if (!proceed && (updateCheckResult === null ||
-                (updateCheckResult.updateInfo && updateCheckResult.updateInfo.version === app.getVersion()))) {
-                log.info("No new update found from checkForUpdates() direct result. Proceeding to login.");
-                proceed = true;
+            if (!proceed) {
+                log.info('[AutoUpdater] Proceed is false, checking for "no update" or "latest version".');
+                if (updateCheckResult === null) {
+                    log.info('[AutoUpdater] updateCheckResult is null. Setting proceed = true.');
+                    proceed = true;
+                } else if (updateCheckResult && updateCheckResult.updateInfo && typeof updateCheckResult.updateInfo.version === 'string') { // updateInfo와 version 타입 체크 추가
+                    log.info(`[AutoUpdater] Comparing remote version "${updateCheckResult.updateInfo.version}" with current "${currentAppVersion}".`);
+                    if (updateCheckResult.updateInfo.version === currentAppVersion) {
+                        log.info('[AutoUpdater] Versions are the same. Setting proceed = true.');
+                        proceed = true;
+                    } else {
+                         log.info('[AutoUpdater] Versions are different. Not setting proceed here. Expecting "update-available" event.');
+                    }
+                } else {
+                    log.warn('[AutoUpdater] updateCheckResult is not null, but updateInfo or updateInfo.version is missing/invalid. Treating as "no clear update info".');
+                    // 이 경우, proceed를 true로 할지 false로 할지 정책 결정 필요.
+                    // 안전하게는 false로 두고 update-available 이벤트를 기다리거나,
+                    // 또는 true로 하여 일단 로그인으로 진행시키는 방법도 있음.
+                    // 여기서는 일단 false로 유지하고 로그를 통해 상황 파악.
+                }
             }
 
             if (proceed) {
-                // 'update-not-available' 이벤트가 발생할 수도 있으므로,
-                // 바로 proceedToLoginWindow()를 호출하기보다, 해당 이벤트 핸들러에 맡기는 것이
-                // 로직 중복을 피하는 방법일 수 있습니다.
-                // 하지만 이벤트가 확실히 발생하지 않는다면 여기서 직접 호출해야 합니다.
-                // 안전하게는, 약간의 딜레이 후 loginWindow가 여전히 없다면 호출.
+                log.info("[AutoUpdater] Final decision: proceed = true. Calling proceedToLoginWindow().");
                 proceedToLoginWindow();
+            } else {
+                log.warn("[AutoUpdater] Final decision: proceed = false. Waiting for events like 'update-available'. This might be the stall point if no event comes.");
             }
-            // 'update-available' 이벤트는 해당 핸들러에서 처리됨.
         })
         .catch(err => {
-            log.error('[AutoUpdater] Initial checkForUpdates() promise rejected:', err);
-            dialog.showMessageBox({ /* ... */ }).then(() => {
+            log.error('[AutoUpdater] Initial checkForUpdates() promise rejected. Error message:', err.message);
+            try {
+                log.error('[AutoUpdater] Rejected Error (JSON):', JSON.stringify(err, Object.getOwnPropertyNames(err)));
+            } catch (e) {
+                log.warn('[AutoUpdater] Could not stringify rejected error:', e.message);
+            }
+            // 다이얼로그 로직은 그대로 유지
+            dialog.showMessageBox({
+                type: 'warning',
+                title: '업데이트 확인 오류',
+                message: '업데이트를 확인하는 중 오류가 발생했습니다. 인터넷 연결을 확인해주세요.',
+                detail: `오류: ${err.message || '알 수 없는 오류'}\n\n로그인 화면으로 계속 진행합니다.`,
+                buttons: ['확인']
+            }).then(() => {
+                log.info("[AutoUpdater] Proceeding to login window after checkForUpdates error dialog (from catch).");
+                proceedToLoginWindow();
+            }).catch(dialogErr => {
+                log.error('[AutoUpdater] Error showing checkForUpdates error dialog (from catch):', dialogErr);
                 proceedToLoginWindow();
             });
         });
@@ -256,7 +291,8 @@ function createSplashWindow() {
     log.info('[WindowManager] Creating splash window...');
     splashWindow = new BrowserWindow({
         width: 400, height: 400, transparent: true, frame: false, alwaysOnTop: true,
-        webPreferences: { preload: path.join(__dirname, './js/preload.js') }
+        webPreferences: { preload: path.join(__dirname, './js/preload.js') },
+        icon: path.join(__dirname, 'assets', 'icon.png'),
     });
     splashWindow.loadFile(path.join(__dirname, 'splash.html'));
     splashWindow.on('closed', () => {
@@ -265,42 +301,99 @@ function createSplashWindow() {
     });
 }
 
-function createLoginWindow() {
+async function createLoginWindow() {
     if (loginWindow && !loginWindow.isDestroyed()) {
         log.info('[WindowManager] Login window already exists, focusing.');
-        loginWindow.focus();
-        return;
-    }
-    log.info('[WindowManager] Creating login window...');
-    loginWindow = new BrowserWindow({
-        width: 750,
-        height: 450,
-        frame: false,
-        show: false,
-        resizable: false,      // 이미 설정되어 있음 (크기 조절 불가)
-        maximizable: false,    // <<--- 추가: 최대화 불가
-        // alwaysOnTop 속성은 이전 요청에 따라 제거됨
-        webPreferences: {
-            preload: path.join(__dirname, '/js/preload.js'),
-            contextIsolation: true,
-            nodeIntegration: false,
-        }
-    });
-    remoteMain.enable(loginWindow.webContents);
-    loginWindow.loadFile(path.join(__dirname, 'login.html'));
-
-    loginWindow.once('ready-to-show', () => {
-        if (loginWindow && !loginWindow.isDestroyed()) {
-            loginWindow.show();
+        try {
             loginWindow.focus();
-            log.info('[WindowManager] Login window shown and focused.');
+        } catch (focusError) {
+            log.error('[WindowManager] Error focusing existing login window:', focusError);
         }
-    });
+        return loginWindow;
+    }
+    log.info('[WindowManager] Attempting to create new login window...');
+    try {
+        loginWindow = new BrowserWindow({
+            width: 750, height: 450, frame: false,
+            show: false,
+            resizable: false, maximizable: false,
+            icon: path.join(__dirname, 'assets', 'icon.png'), // 아이콘 경로 추가 (이전 요청 반영)
+            webPreferences: {
+                preload: path.join(__dirname, 'js', 'preload.js'), // 경로에 슬래시 대신 path.join 사용 권장
+                contextIsolation: true, nodeIntegration: false,
+                devTools: isDev // 개발 중에만 개발자 도구 활성화 (선택적)
+            }
+        });
+        log.info('[WindowManager] BrowserWindow for login created.');
 
-    loginWindow.on('closed', () => {
-        log.info('[WindowManager] Login window closed.');
-        loginWindow = null;
-    });
+        try {
+            remoteMain.enable(loginWindow.webContents);
+            log.info('[WindowManager] remoteMain enabled for login window.');
+        } catch (remoteEnableError) {
+            log.error('[WindowManager] Error enabling remoteMain for login window:', remoteEnableError);
+            // 이 오류가 치명적일 수 있음
+        }
+
+        const loginHtmlPath = path.join(__dirname, 'login.html');
+        log.info(`[WindowManager] Attempting to load login.html from: ${loginHtmlPath}`);
+        await loginWindow.loadFile(loginHtmlPath);
+        log.info('[WindowManager] login.html loaded successfully.');
+
+        loginWindow.once('ready-to-show', () => {
+            log.info('[WindowManager] Login window is ready to show.');
+            // showTheLoginWindow() 호출은 proceedToLoginWindow 또는 업데이트 확인 후 결정
+        });
+
+        loginWindow.on('closed', () => {
+            log.info('[WindowManager] Login window closed event.');
+            loginWindow = null;
+        });
+
+        return loginWindow;
+
+    } catch (creationError) {
+        log.error('[WindowManager] CRITICAL ERROR creating login window:', creationError);
+        // 여기서 오류를 다시 throw 하거나, 앱 종료 로직으로 연결
+        throw creationError; // SPLASH_DONE 핸들러의 catch에서 잡도록
+    }
+}
+
+// proceedToLoginWindow 함수 수정: 창을 보여주는 로직 분리
+function showTheLoginWindow() {
+    if (loginWindow && !loginWindow.isDestroyed() && !loginWindow.isVisible()) {
+        loginWindow.show();
+        loginWindow.focus();
+        log.info('[WindowManager] Login window is now shown and focused.');
+    } else if (loginWindow && loginWindow.isVisible()) {
+        loginWindow.focus();
+        log.info('[WindowManager] Login window was already visible, focused.');
+    } else {
+        log.warn('[WindowManager] showTheLoginWindow called but loginWindow is not valid or already shown.');
+    }
+}
+
+// 로그인 창으로 진행하는 함수
+function proceedToLoginWindow() {
+    log.info('[WindowManager] Attempting to proceed to login window (logic part).');
+    if (splashWindow && !splashWindow.isDestroyed()) {
+        log.info('[WindowManager] Closing splash window before proceeding to login.');
+        splashWindow.close();
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        log.info('[WindowManager] Closing main window before proceeding to login.');
+        mainWindow.close();
+    }
+
+    // 로그인 창이 이미 생성되었다면 보여주기만 함
+    if (loginWindow && !loginWindow.isDestroyed()) {
+        showTheLoginWindow();
+    } else {
+        // 이 경우는 SPLASH_DONE에서 createLoginWindow가 먼저 호출되므로 거의 발생 안 함
+        log.warn('[WindowManager] proceedToLoginWindow: Login window not created yet, creating and showing.');
+        createLoginWindow().then(() => { // createLoginWindow가 Promise를 반환하도록 수정 필요
+            showTheLoginWindow();
+        });
+    }
 }
 
 function createMainWindow() {
@@ -318,10 +411,12 @@ function createMainWindow() {
         resizable: false,      // <<--- 추가: 크기 조절 불가
         maximizable: false,    // <<--- 추가: 최대화 불가
         // alwaysOnTop 속성은 이전 요청에 따라 제거됨
+        icon: path.join(__dirname, 'assets', 'icon.png'),
         webPreferences: {
             preload: path.join(__dirname, 'js', 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
+            backgroundThrottling: false // <<--- 이 옵션을 추가합니다!
         }
     });
     remoteMain.enable(mainWindow.webContents);
@@ -339,28 +434,6 @@ function createMainWindow() {
         log.info('[WindowManager] Main window closed.');
         mainWindow = null;
     });
-}
-
-// 로그인 창으로 진행하는 함수
-function proceedToLoginWindow() {
-    log.info('[WindowManager] Attempting to proceed to login window...');
-    if (splashWindow && !splashWindow.isDestroyed()) {
-        log.info('[WindowManager] Closing splash window before proceeding to login.');
-        splashWindow.close(); // splashWindow = null; 은 'closed' 이벤트에서 처리
-    }
-
-    // 메인 창이 열려있다면 닫아야 로그인 창으로 "돌아갈" 수 있음
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        log.info('[WindowManager] Closing main window before proceeding to login.');
-        mainWindow.close(); // mainWindow = null; 은 'closed' 이벤트에서 처리
-    }
-
-    if (loginWindow && !loginWindow.isDestroyed()) {
-        log.warn('[WindowManager] Login window might already exist. Focusing login.');
-        loginWindow.focus();
-        return;
-    }
-    createLoginWindow();
 }
 
 // --- 마이크로소프트 로그인
@@ -557,8 +630,23 @@ ipcMain.on(MSFT_OPCODE.OPEN_LOGOUT, async (ipcEvent, uuid) => {
 // 게임 시작 요청 IPC 핸들러
 ipcMain.handle('launch-minecraft', async (event) => { // event 인자 추가
     log.info('[IPC] Received request to launch Minecraft.');
+
+    if (!mainWindow) {
+        log.error('[IPC] mainWindow variable is NULL or UNDEFINED.');
+    } else if (mainWindow.isDestroyed()) {
+        log.error('[IPC] mainWindow IS DESTROYED.');
+    } else {
+        log.info(`[IPC] mainWindow is VALID. ID: ${mainWindow.id}, isVisible: ${mainWindow.isVisible()}, isFocused: ${mainWindow.isFocused()}`);
+    }
+
+    // 이전 유효성 검사 유지
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        log.error('[IPC] Cannot launch game, mainWindow is not available or destroyed.');
+        dialog.showErrorBox('런처 오류', '메인 윈도우가 준비되지 않았거나 닫혔습니다. 앱을 재시작해주세요.');
+        return { success: false, message: '메인 윈도우 없음' };
+    }
     try {
-        const launchResult = await launchMinecraftGame();
+        const launchResult = await launchMinecraftGame(mainWindow);
         if (launchResult.success) {
             log.info(`[IPC] ${launchResult.message}`);
             // app.quit(); // <<--- 제거!
@@ -577,8 +665,47 @@ ipcMain.handle('launch-minecraft', async (event) => { // event 인자 추가
 
 // 렌더러로부터 앱 종료 요청을 받는 핸들러 추가
 ipcMain.on('request-app-quit', () => {
-    log.info('[IPC] Received request-app-quit from renderer. Quitting app.');
+    log.info('[IPC] Received request-app-quit from renderer.');
+
+    // 모든 창 닫기
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        log.info('[IPC] Closing main window before quitting.');
+        mainWindow.close();
+    }
+    if (loginWindow && !loginWindow.isDestroyed()) {
+        log.info('[IPC] Closing login window before quitting.');
+        loginWindow.close();
+    }
+    if (splashWindow && !splashWindow.isDestroyed()) {
+        log.info('[IPC] Closing splash window before quitting.');
+        splashWindow.close();
+    }
+    if (msftAuthWindow && !msftAuthWindow.isDestroyed()) {
+        log.info('[IPC] Closing Microsoft auth window before quitting.');
+        msftAuthWindow.close();
+    }
+    if (msftLogoutWindow && !msftLogoutWindow.isDestroyed()) {
+        log.info('[IPC] Closing Microsoft logout window before quitting.');
+        msftLogoutWindow.close();
+    }
+
+    const remainingWindows = BrowserWindow.getAllWindows();
+    if (remainingWindows.length > 0) {
+        log.warn('[IPC] Some windows are still open:', remainingWindows.map(win => win.id));
+    } else {
+        log.info('[IPC] All windows are closed.');
+    }
+
+    log.info('[IPC] Attempting to quit app with app.quit().');
     app.quit();
+
+    // app.quit()이 실패할 경우를 대비해 1초 후 강제 종료
+    setTimeout(() => {
+        if (!app.isQuitting()) {
+            log.warn('[IPC] App did not quit after app.quit(). Forcing exit with app.exit().');
+            app.exit(0);
+        }
+    }, 1000);
 });
 
 ipcMain.handle('settings:get-all', async () => {
@@ -648,17 +775,21 @@ app.whenReady().then(async () => {
 
     createSplashWindow();
 
-    ipcMain.on(IPC_CHANNELS.SPLASH_DONE, () => {
-        log.info("Splash done. Closing splash and then checking for updates...");
+    ipcMain.on(IPC_CHANNELS.SPLASH_DONE, async () => {
+        log.info("Splash done. Closing splash."); // <<<--- 이 로그는 찍힘
         if (splashWindow && !splashWindow.isDestroyed()) {
-            splashWindow.once('closed', () => {
-                log.info("Splash window officially closed. Now checking for updates.");
-                checkForInitialUpdates();
-            });
-            splashWindow.close();
-        } else {
-            log.info("No splash window found or already closed. Checking for updates directly.");
+            splashWindow.close(); // closed 이벤트 핸들러에서 splashWindow = null 처리
+        }
+
+        log.info("Creating login window (initially hidden) before checking for updates."); // <<<--- 이 로그는 찍힘
+        try {
+            await createLoginWindow(); // <<<--- 이 호출 직후 또는 내부에서 멈춤
+            log.info("Login window created (or already existed). Now checking for updates."); // 이 로그가 안 찍힘
             checkForInitialUpdates();
+        } catch (error) {
+            log.error("Error creating login window before update check:", error);
+            dialog.showErrorBox("초기화 오류", "로그인 창을 준비하는 중 오류가 발생했습니다.");
+            app.quit();
         }
     });
 
