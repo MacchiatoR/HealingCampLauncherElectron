@@ -1,0 +1,141 @@
+[33mcommit a48da29a560b00ae173fc2fb6610d38692d0cc83[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;33mtag: [m[1;33mv1.10.7[m[33m, [m[1;31morigin/main[m[33m)[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Thu May 29 05:00:28 2025 +0900
+
+    Update many things
+
+[33mcommit 0b7aca026c2efdc81d67141926868ada03d510e3[m[33m ([m[1;33mtag: [m[1;33mv1.10.6[m[33m, [m[1;33mtag: [m[1;33mv1.10.5[m[33m)[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Wed May 21 16:49:44 2025 +0900
+
+    1. Change the program icon
+    2. Modify the Java detection logic
+    3. Fix the issue where the modal does not update when the window is in the background
+
+[33mcommit 153e6aef0d1d9d948dbdf188f93303d3bacfc103[m[33m ([m[1;33mtag: [m[1;33mv1.10.4[m[33m, [m[1;33mtag: [m[1;33mv1.10.3[m[33m)[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Wed May 14 03:15:18 2025 +0900
+
+    Backup Commit
+
+[33mcommit 8aaf5006d02658dffcba497996d6a1b2b884d002[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Wed May 14 02:26:12 2025 +0900
+
+    Disable maximize window and resizing
+
+[33mcommit cb538058bc32098aa5979009babac2182ddd8530[m[33m ([m[1;33mtag: [m[1;33mv1.10.2[m[33m)[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Wed May 14 02:14:01 2025 +0900
+
+    Improved user experience.
+
+[33mcommit 856725fa3718264e01f0c3787f0c4ede72b239c1[m[33m ([m[1;33mtag: [m[1;33mv1.10.0[m[33m)[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Wed May 14 01:28:35 2025 +0900
+
+    change text in modal
+
+[33mcommit ba15d1afd42d15d78cdc18213563280ff7c9b942[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Wed May 14 01:26:25 2025 +0900
+
+    Added a modal system related to game launch
+
+[33mcommit 4ecf4e7ccdef070006e4b1ee6c669ec6d64f4885[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Wed May 14 00:36:22 2025 +0900
+
+    Fixed an issue where resolution settings were not being applied.
+
+[33mcommit c4cef72cabd442fbb111ad78a361436e96028105[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Wed May 14 00:33:02 2025 +0900
+
+    Fixed an issue where user settings were not being properly applied.
+
+[33mcommit 874daf769ad595fa0f4ec370cf766b56eb3cb0d7[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Wed May 14 00:26:18 2025 +0900
+
+    Fixed some bugs
+
+[33mcommit 9aad3eb6e9442766862e3c5971505f7b5ea1a0c4[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Wed May 14 00:08:19 2025 +0900
+
+    Add setting UI in mainmenu
+
+[33mcommit b16769c23ce7daa45f71074c4ef4b51b3598a710[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Tue May 13 21:06:58 2025 +0900
+
+    Fixed an issue where the in-game account was not being applied
+
+[33mcommit c75bb6021ec49eb0a89ea4262399403126b1b523[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Tue May 13 19:01:08 2025 +0900
+
+    Add game launch system in mainmenu
+
+[33mcommit 4de77672636cc2ae8538d95974d92293d73407a0[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Tue May 13 04:53:08 2025 +0900
+
+    Add logout system in mainmenu
+
+[33mcommit 70c3bc64e2afdb6f5c3269ecbbeb78f6548a39d7[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Tue May 13 01:12:56 2025 +0900
+
+    Add close button in mainmenu
+
+[33mcommit f68eaa3a73421b16499b95df73e699903e94a025[m
+Merge: c4c91af 4f2245d
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Mon May 12 23:41:42 2025 +0900
+
+    Merge branch 'test'
+
+[33mcommit 4f2245d9f9fca56bd76c27232a473c037ab3849b[m[33m ([m[1;31morigin/test[m[33m)[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Mon May 12 23:33:54 2025 +0900
+
+    Update to 1.0.7
+    Resolve automatic update issue
+
+[33mcommit c4c91af8fe394055786f71deedbfc0a5415f8266[m[33m ([m[1;33mtag: [m[1;33mv1.0.7[m[33m)[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Mon May 12 23:00:41 2025 +0900
+
+    Update to 1.0.6
+
+[33mcommit 5de53d22365d6261477ac2503439c7d19387b302[m[33m ([m[1;33mtag: [m[1;33mv1.0.6[m[33m, [m[1;33mtag: [m[1;33mv1.0.5[m[33m)[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Mon May 12 21:17:06 2025 +0900
+
+    Update to 1.0.5
+
+[33mcommit d09c9790dd78cc9958b7f297b75455ceb6f3485e[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Mon May 12 20:55:43 2025 +0900
+
+    Update to 1.0.4
+
+[33mcommit 60c1ac43f8ac277fe7b3fbeacf244084e8b77537[m[33m ([m[1;33mtag: [m[1;33mv1.0.4[m[33m, [m[1;33mtag: [m[1;33mv1.0.3[m[33m)[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Mon May 12 20:25:45 2025 +0900
+
+    Update to 1.0.3
+
+[33mcommit c0d8529068f71c89e85abc66b4c4c88b62e72c22[m[33m ([m[1;33mtag: [m[1;33mv1.0.2[m[33m, [m[1;33mtag: [m[1;33mv1.0.1[m[33m)[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Mon May 12 20:10:12 2025 +0900
+
+    Update To 1.0.1
+
+[33mcommit 3333794108eb16cbe8acd35e93949ee256c608ef[m[33m ([m[1;33mtag: [m[1;33mv1.0.0[m[33m)[m
+Author: horangkim <horangkim@hyperlunatic.com>
+Date:   Mon May 12 17:50:46 2025 +0900
+
+    first commit

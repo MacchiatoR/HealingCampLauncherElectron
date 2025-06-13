@@ -34,7 +34,7 @@ let JAVA_PATH_CACHE = undefined;
 let targetWindowForProgress = null;
 
 // --- 리소스 업데이트 설정 ---
-const RESOURCE_VERSION_URL = 'https://www.dropbox.com/scl/fi/pl5l3q11squqmmqjsidqd/version_NarangNorang.txt?rlkey=2uycyf890dlgrzt8mlu5urglf&st=u75kw5s9&dl=1'; // 예: https://example.com/game_resources/version.txt
+const RESOURCE_VERSION_URL = 'https://www.dropbox.com/scl/fi/t1j62qymf3daompu9ryjs/version_NarangNorang.txt?rlkey=h46qi9rjh9gd6qc3nzftum0xq&st=u7560ok5&dl=1'; // 예: https://example.com/game_resources/version.txt
 const RESOURCE_ZIP_URL = 'https://www.dropbox.com/scl/fi/82r85440eqvujtlt277ft/narangnorang.zip?rlkey=0if3jj6qqhlgb97thy0neev1g&st=gx4fmm4t&dl=1';         // 예: https://example.com/game_resources/latest_resources.zip
 const LOCAL_VERSION_FILE_NAME = 'resource_version.txt'; // 실행 폴더 내 버전 파일명
 

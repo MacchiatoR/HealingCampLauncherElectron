@@ -410,6 +410,7 @@ function createMainWindow() {
         frame: false,
         resizable: false,      // <<--- 추가: 크기 조절 불가
         maximizable: false,    // <<--- 추가: 최대화 불가
+        transparent: true,
         // alwaysOnTop 속성은 이전 요청에 따라 제거됨
         icon: path.join(__dirname, 'assets', 'icon.png'),
         webPreferences: {
