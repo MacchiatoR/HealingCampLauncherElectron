@@ -1,23 +1,25 @@
-
-// launch.js (또는 main.js의 일부)
+// launch.js
 const { launch, Version, diagnose, LaunchOption, MinecraftFolder } = require('@xmcl/core');
 const {
     installTask,
-    installForgeTask,
     installDependenciesTask,
+    installNeoForgedTask,
+    fetchJavaRuntimeManifest,
+    installJavaRuntimeTask,
+    JavaRuntimeTargetType,
     getVersionList,
-    getPotentialJavaLocations, 
-    resolveJava,               
+    getPotentialJavaLocations,
+    resolveJava,
 } = require('@xmcl/installer');
 const path = require('path');
 const fs = require('fs-extra');
-const { app } = require('electron');
+const { app, ipcMain, BrowserWindow } = require('electron');
 const axios = require('axios'); // HTTP 요청용
 const AdmZip = require('adm-zip'); // ZIP 압축 해제
+const yaml = require('js-yaml'); // npm install js-yaml
 
 const ConfigManager = require('./confighandler'); // 가정: ConfigManager는 별도로 존재
-const AuthHandler = require('./authhandler');   // 가정: AuthHandler는 별도로 존재 (토큰 갱신 등)
-const { ipcMain, BrowserWindow } = require('electron');
+const AuthHandler = require('./authhandler');     // 가정: AuthHandler는 별도로 존재
 
 const log = {
     info: (message, ...args) => console.log(`[GameLauncher] [INFO] ${new Date().toISOString()} ${message}`, ...args),
@@ -26,42 +28,70 @@ const log = {
 };
 
 // --- 설정 ---
-const MINECRAFT_VERSION_TARGET = '1.20.1';
-const FORGE_MC_VERSION = '1.20.1';
-const FORGE_BUILD_VERSION = '47.4.0';
-const MINECRAFT_ROOT_PATH = path.join(app.getPath('appData'), '.instance_HealingcampLauncher'); // 데이터 저장 경로
-let JAVA_PATH_CACHE = undefined; 
+const MINECRAFT_VERSION_TARGET = '1.21.1';
+const NEOFORGE_PROJECT = 'neoforge';
+const NEOFORGE_VERSION = '21.1.233';
+const REQUIRED_JAVA_MAJOR_VERSION = 21;
+// 데이터 저장 경로 (필요시 수정)
+const MINECRAFT_ROOT_PATH = path.join(app.getPath('appData'), '.instance_HealingcampLauncher'); 
+
 let targetWindowForProgress = null;
 
 // --- 리소스 업데이트 설정 ---
-const RESOURCE_VERSION_URL = 'https://www.dropbox.com/scl/fi/t1j62qymf3daompu9ryjs/version_NarangNorang.txt?rlkey=h46qi9rjh9gd6qc3nzftum0xq&st=u7560ok5&dl=1'; // 예: https://example.com/game_resources/version.txt
-const RESOURCE_ZIP_URL = 'https://www.dropbox.com/scl/fi/82r85440eqvujtlt277ft/narangnorang.zip?rlkey=0if3jj6qqhlgb97thy0neev1g&st=gx4fmm4t&dl=1';         // 예: https://example.com/game_resources/latest_resources.zip
-const LOCAL_VERSION_FILE_NAME = 'resource_version.txt'; // 실행 폴더 내 버전 파일명
-
+// 주의: Dropbox 링크는 트래픽 제한이 있을 수 있으므로 추후 변경 권장
+const RESOURCE_VERSION_URL = 'https://github.com/MacchiatoR/HealingCampLauncherElectron/releases/download/resource_1.0.0/version_NarangNorang.txt'; 
+const RESOURCE_ZIP_URL = 'https://github.com/MacchiatoR/HealingCampLauncherElectron/releases/download/resource_1.0.0/narangnorang.zip';         
+const LOCAL_VERSION_FILE_NAME = 'resource_version.txt'; 
 
 // --- 다운로드 옵션 ---
 const DOWNLOAD_TIMEOUT = 10000; // 10초 타임아웃
 
-// --- Minecraft 루트 경로 지연 초기화 및 원하는 경로로 설정 ---
+// --- Minecraft 루트 경로 지연 초기화 ---
 let minecraftRootPathSingleton = null;
 function getMinecraftRootPath() {
     if (!minecraftRootPathSingleton) {
-        minecraftRootPathSingleton = path.join(app.getPath('appData'), '.instance_HealingcampLauncher'); // 리소스 전용 폴더 또는 기존 게임 폴더
+        minecraftRootPathSingleton = MINECRAFT_ROOT_PATH;
         log.info(`Resource/Game root path initialized to: ${minecraftRootPathSingleton}`);
         fs.ensureDirSync(minecraftRootPathSingleton);
     }
     return minecraftRootPathSingleton;
 }
 
+// --- 진행률 업데이트 IPC 전송 함수 ---
+function sendProgressUpdate(eventChannel, data) {
+    if (targetWindowForProgress && !targetWindowForProgress.isDestroyed()) {
+        try {
+            targetWindowForProgress.webContents.send(eventChannel, data);
+        } catch (e) {
+            log.warn(`Failed to send IPC message: ${e.message}`);
+        }
+    } else {
+        log.warn(`[GameLauncher] Target window for progress is not available or destroyed.`);
+    }
+}
+
 /**
- * Task 실행 및 진행률 로깅을 위한 헬퍼 함수
+ * Task 실행 및 진행률 로깅 + IPC 전송을 위한 헬퍼 함수 (통합됨)
  * @param {import('@xmcl/task').Task<any>} taskInstance 실행할 xmcl Task 객체
- * @param {string} taskDescription 로깅을 위한 작업 설명
+ * @param {string} taskDescription 로깅 및 모달 메시지용 작업 설명
+ * @param {number} baseProgress 이 작업이 시작될 때의 전체 진행률 (0~100)
+ * @param {number} taskWeight 이 작업이 전체 진행률에서 차지하는 비중 (0~100)
+ * @param {string} overallTaskKey 전체 작업 단계를 구분하는 키
  * @returns {Promise<any>} Task의 결과값
  */
-async function runTaskWithProgress(taskInstance, taskDescription) {
+async function runTaskWithProgress(taskInstance, taskDescription, baseProgress = 0, taskWeight = 0, overallTaskKey = 'generic-task') {
     log.info(`Starting task: ${taskDescription} (Path: ${taskInstance.path || 'N/A'})`);
-    let lastLoggedProgress = -1; // 마지막으로 로그된 진행률 (너무 잦은 로그 방지용)
+    
+    // 태스크 시작 알림
+    sendProgressUpdate('launch-progress-update', {
+        message: `${taskDescription} 시작 중...`,
+        progress: baseProgress,
+        details: `Task: ${taskInstance.name || taskDescription}`,
+        taskKey: overallTaskKey
+    });
+
+    let lastLoggedProgress = -1;
+    let lastSentOverallProgress = baseProgress;
 
     try {
         const result = await taskInstance.startAndWait({
@@ -69,50 +99,100 @@ async function runTaskWithProgress(taskInstance, taskDescription) {
                 log.info(` -> Sub-task started: ${task.name || 'Unnamed Subtask'} (Path: ${task.path})`);
             },
             onUpdate(task, chunkSize) {
-                const rootProgress = Math.round((taskInstance.progress / taskInstance.total) * 100);
-                if (taskInstance.total > 0 && rootProgress % 10 === 0 && rootProgress !== lastLoggedProgress) {
-                    log.info(` -> Overall task [${taskDescription}] progress: ${rootProgress}% (${taskInstance.progress} / ${taskInstance.total})`);
-                    lastLoggedProgress = rootProgress;
+                if (taskInstance.total > 0) {
+                    const taskProgressPercent = (taskInstance.progress / taskInstance.total); // 0.0 ~ 1.0
+                    // 전체 진행률 = 시작점 + (현재태스크진행률 * 가중치)
+                    const currentOverallProgress = Math.round(baseProgress + (taskProgressPercent * taskWeight));
+
+                    // 너무 잦은 업데이트 방지 (1% 단위 또는 상태 변경 시)
+                    if (currentOverallProgress !== lastSentOverallProgress) {
+                        sendProgressUpdate('launch-progress-update', {
+                            message: taskDescription,
+                            progress: currentOverallProgress,
+                            details: `진행 중: ${task.path || task.name || '파일'} (${Math.round(taskProgressPercent * 100)}%)`,
+                            taskKey: overallTaskKey
+                        });
+                        lastSentOverallProgress = currentOverallProgress;
+                    }
+                    
+                    // 로그는 10% 단위로
+                    const percentInt = Math.round(taskProgressPercent * 100);
+                    if (percentInt % 10 === 0 && percentInt !== lastLoggedProgress) {
+                        log.info(` -> [${taskDescription}] Progress: ${percentInt}% (Total: ${currentOverallProgress}%)`);
+                        lastLoggedProgress = percentInt;
+                    }
                 }
             },
             onFailed(task, error) {
-                log.error(` -> Sub-task failed: ${task.name || 'Unnamed Subtask'} (Path: ${task.path})`, error);
+                log.error(` -> Sub-task failed: ${task.name || 'Unnamed Subtask'}`, error);
+                // 실패했더라도 상위 catch에서 처리하므로 여기서는 로그만 남김
             },
             onSucceed(task, taskResult) {
-                log.info(` -> Sub-task succeeded: ${task.name || 'Unnamed Subtask'} (Path: ${task.path})`);
+                // 개별 서브태스크 성공 로그
             },
         });
+
         log.info(`Task completed: ${taskDescription}`);
-        return result; // Task의 최종 결과 반환
+        
+        // 태스크 완료 시, 할당된 가중치를 모두 채운 진행률 전송
+        sendProgressUpdate('launch-progress-update', {
+            message: `${taskDescription} 완료!`,
+            progress: baseProgress + taskWeight,
+            details: `완료: ${taskDescription}`,
+            taskKey: overallTaskKey
+        });
+        return result;
     } catch (error) {
         log.error(`Error during task execution [${taskDescription}]:`, error);
-        throw error; // 오류를 다시 던져 상위에서 처리하도록 함
+        throw error; // 상위 호출자로 에러 전파
     }
 }
 
 /**
- * 적절한 Java 경로를 찾거나 확인합니다.
- * @param {MinecraftFolder} minecraftLocation 마인크래프트 폴더 객체
- * @returns {Promise<string>} Java 실행 파일 경로
+ * 재시도 로직이 포함된 Task 실행 함수
+ * [수정됨] 인자들을 runTaskWithProgress로 올바르게 전달하도록 수정
+ */
+async function runTaskWithRetry(taskInstance, description, baseProgress, taskWeight, taskKey, retries = 3) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            return await runTaskWithProgress(taskInstance, description, baseProgress, taskWeight, taskKey);
+        } catch (error) {
+            if (attempt < retries) {
+                log.warn(`${description} 실패 (${attempt}/${retries}) → 재시도 중... 에러: ${error.message}`);
+                await new Promise(r => setTimeout(r, 1000)); // 1초 대기 후 재시도
+            } else {
+                log.error(`${description} 최종 실패.`);
+                throw error;
+            }
+        }
+    }
+}
+
+/**
+ * 적절한 Java 경로를 찾거나 확인 (없으면 설치)
  */
 async function ensureJavaPath(minecraftLocation) {
-    if (JAVA_PATH_CACHE && fs.existsSync(JAVA_PATH_CACHE)) {
-        log.info(`Using cached Java path: ${JAVA_PATH_CACHE}`);
-        if (JAVA_PATH_CACHE) return JAVA_PATH_CACHE;
+    const minecraftRoot = typeof minecraftLocation === 'string'
+        ? minecraftLocation
+        : (minecraftLocation.root || minecraftLocation.toString?.() || '');
+
+    if (!minecraftRoot || typeof minecraftRoot !== 'string') {
+        throw new Error('Invalid minecraftLocation: must be a string or an object with root property.');
     }
-    JAVA_PATH_CACHE = undefined;
 
-    log.info('Attempting to find suitable Java installation (Version 17+)...');
+    const logDir = path.join(minecraftRoot, 'logs_launcher');
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const logFilePath = path.join(logDir, 'java_detection.yml');
+
+    const foundJavaList = [];
     let foundJavaPath = null;
+    let javaInstalled = false;
 
-    // 개선된 버전 파싱 함수
     const parseMajorJavaVersion = (versionString) => {
         if (!versionString || typeof versionString !== 'string') return 0;
-        // "17.0.1+9", "21-ea", "1.8.0_291" 등 다양한 형식 처리
         const match = versionString.match(/^(\d+)(\.\d+)*([.-_]\d+)*([+-].*)?$/);
         if (!match) return 0;
         let major = parseInt(match[1]) || 0;
-        // 1.8.x 같은 형식 처리
         if (major === 1 && versionString.startsWith('1.')) {
             const parts = versionString.split(/[.-_]/);
             major = parseInt(parts[1]) || 0;
@@ -120,70 +200,49 @@ async function ensureJavaPath(minecraftLocation) {
         return major;
     };
 
-    // Java 경로를 테스트하는 헬퍼 함수
     const testJavaPath = async (javaExePath, source) => {
-        if (!fs.existsSync(javaExePath)) {
-            log.warn(`Java executable not found at ${javaExePath} (Source: ${source})`);
-            return null;
-        }
+        if (!fs.existsSync(javaExePath)) return null;
         try {
-            log.info(`Testing Java at: ${javaExePath} (Source: ${source})`);
             const javaInfo = await resolveJava(javaExePath);
             if (javaInfo && javaInfo.path && javaInfo.version) {
                 const majorVersion = parseMajorJavaVersion(javaInfo.version);
-                log.info(`Resolved Java: Path=${javaInfo.path}, Version=${javaInfo.version}, Major=${majorVersion}`);
-                if (majorVersion >= 17) {
-                    log.info(`Found SUITABLE Java: Path=${javaInfo.path}, Version=${javaInfo.version} (Source: ${source})`);
-                    return javaInfo.path;
-                } else {
-                    log.warn(`Java at ${javaInfo.path} has version ${javaInfo.version} (Major ${majorVersion}) < 17 (Source: ${source})`);
-                }
-            } else {
-                log.warn(`Java at ${javaExePath} resolved but missing path/version info: ${JSON.stringify(javaInfo)} (Source: ${source})`);
+                foundJavaList.push({ path: javaInfo.path, version: javaInfo.version, source });
+                if (majorVersion >= REQUIRED_JAVA_MAJOR_VERSION) return javaInfo.path;
             }
-        } catch (e) {
-            log.warn(`Failed to resolve Java at ${javaExePath}: ${e.message} (Source: ${source})`);
-        }
+        } catch (_) { }
         return null;
     };
 
     try {
-        // 1. @xmcl/installer로 잠재적 Java 위치 탐색
+        // 1. 기존 탐색 로직
         const potentialLocations = await getPotentialJavaLocations();
         if (potentialLocations && potentialLocations.length > 0) {
-            log.info('Potential Java locations from @xmcl/installer:', potentialLocations);
             for (const loc of potentialLocations) {
                 let javaExeToTest = loc;
                 if (!loc.toLowerCase().endsWith('java.exe') && !loc.toLowerCase().endsWith('java')) {
-                    const platformSpecificPath = process.platform === 'win32' ? path.join(loc, 'bin', 'java.exe') : path.join(loc, 'bin', 'java');
+                    const platformSpecificPath = process.platform === 'win32'
+                        ? path.join(loc, 'bin', 'java.exe')
+                        : path.join(loc, 'bin', 'java');
                     if (fs.existsSync(platformSpecificPath)) {
                         javaExeToTest = platformSpecificPath;
-                    } else {
-                        const rootJavaExe = process.platform === 'win32' ? path.join(loc, 'java.exe') : path.join(loc, 'java');
-                        if (fs.existsSync(rootJavaExe)) javaExeToTest = rootJavaExe;
                     }
                 }
                 foundJavaPath = await testJavaPath(javaExeToTest, '@xmcl/installer');
                 if (foundJavaPath) break;
             }
-        } else {
-            log.warn('No potential Java locations found by @xmcl/installer.');
         }
 
-        // 2. JAVA_HOME 환경 변수 확인
-        if (!foundJavaPath) {
-            const javaHome = process.env.JAVA_HOME;
-            if (javaHome) {
-                const javaExePath = process.platform === 'win32' ? path.join(javaHome, 'bin', 'java.exe') : path.join(javaHome, 'bin', 'java');
-                foundJavaPath = await testJavaPath(javaExePath, 'JAVA_HOME');
-            } else {
-                log.info('JAVA_HOME environment variable is not set.');
-            }
+        // 2. JAVA_HOME 확인
+        if (!foundJavaPath && process.env.JAVA_HOME) {
+            const javaExePath = process.platform === 'win32'
+                ? path.join(process.env.JAVA_HOME, 'bin', 'java.exe')
+                : path.join(process.env.JAVA_HOME, 'bin', 'java');
+            foundJavaPath = await testJavaPath(javaExePath, 'JAVA_HOME');
         }
 
-        // 3. 시스템 PATH에서 Java 탐색
+        // 3. PATH 환경변수 확인
         if (!foundJavaPath) {
-            const pathEnv = process.env.PATH || process.env.Path || '';
+            const pathEnv = process.env.PATH || '';
             const pathEntries = pathEnv.split(process.platform === 'win32' ? ';' : ':');
             for (const entry of pathEntries) {
                 if (!entry) continue;
@@ -193,121 +252,148 @@ async function ensureJavaPath(minecraftLocation) {
             }
         }
 
-        // 4. 일반적인 Java 설치 경로 확인
+        // 4. 없으면 런처 전용 폴더에 자동 설치
         if (!foundJavaPath) {
-            const commonLocations = [];
-            if (process.platform === 'win32') {
-                commonLocations.push('C:\\Program Files\\Java', 'C:\\Program Files (x86)\\Java');
-            } else if (process.platform === 'darwin') {
-                commonLocations.push('/Library/Java/JavaVirtualMachines', '/usr/lib/jvm');
+            const javaInstallDir = path.join(minecraftRoot, 'runtime', `java-${REQUIRED_JAVA_MAJOR_VERSION}`);
+            // 이미 다운로드 되어있는지 확인
+            const checkPath = process.platform === 'win32' 
+                ? path.join(javaInstallDir, 'bin', 'java.exe') 
+                : path.join(javaInstallDir, 'bin', 'java');
+            
+            if (fs.existsSync(checkPath)) {
+                foundJavaPath = checkPath;
             } else {
-                commonLocations.push('/usr/lib/jvm', '/opt/java');
-            }
+                console.log(`Java ${REQUIRED_JAVA_MAJOR_VERSION} not found. Installing...`);
+                if (!fs.existsSync(javaInstallDir)) fs.mkdirSync(javaInstallDir, { recursive: true });
+                
+                const javaManifest = await fetchJavaRuntimeManifest({
+                    target: JavaRuntimeTargetType.Gamma,
+                });
+                await installJavaRuntimeTask({
+                    manifest: javaManifest,
+                    destination: javaInstallDir,
+                    timeout: 300000,
+                    retries: 3,
+                }).startAndWait();
 
-            for (const baseDir of commonLocations) {
-                if (!fs.existsSync(baseDir)) continue;
-                const subDirs = fs.readdirSync(baseDir, { withFileTypes: true })
-                    .filter(dirent => dirent.isDirectory())
-                    .map(dirent => path.join(baseDir, dirent.name));
-                for (const subDir of subDirs) {
-                    const javaExePath = process.platform === 'win32' ? path.join(subDir, 'bin', 'java.exe') : path.join(subDir, 'bin', 'java');
-                    foundJavaPath = await testJavaPath(javaExePath, `Common Location (${baseDir})`);
-                    if (foundJavaPath) break;
-                }
-                if (foundJavaPath) break;
+                foundJavaPath = checkPath;
+                javaInstalled = true;
             }
         }
 
-        if (foundJavaPath) {
-            JAVA_PATH_CACHE = foundJavaPath;
-            return foundJavaPath;
-        }
+        const logData = {
+            timestamp: new Date().toISOString(),
+            found_java: foundJavaList,
+            selected_java: foundJavaPath || null,
+            installed: javaInstalled
+        };
+        fs.writeFileSync(logFilePath, yaml.dump(logData), 'utf8');
 
-        log.error("Suitable Java installation (Version 17+) not found after exhaustive search.");
-        throw new Error("Could not find a suitable Java 17+ installation. Please install Java 17 or higher and ensure it's in your PATH, or configure the Java path manually.");
+        return foundJavaPath;
 
     } catch (e) {
         log.error(`Error during Java path detection: ${e.message}`);
-        if (e.stack) log.error("Stack trace for Java detection error:", e.stack);
-        if (e.message.includes("Could not find a suitable Java 17+")) throw e;
-        throw new Error(`Java detection failed: ${e.message}. Please ensure Java 17+ is installed and accessible.`);
+        throw e;
     }
 }
 
 /**
- * 마인크래프트 및 포지 설치/확인
- * @param {string} targetMcVersion 바닐라 마인크래프트 버전
- * @param {string} targetForgeMcVersion 포지가 대상하는 마인크래프트 버전 (예: "1.20.1")
- * @param {string} targetForgeBuild 포지 빌드 번호 (예: "47.2.0")
- * @returns {Promise<string>} 실행할 최종 버전 ID
+ * 마인크래프트 및 네오포지 설치/확인 (수정됨: 진행률 인자 전달)
  */
-async function ensureMinecraftAndForgeInstalled(targetMcVersion, targetForgeMcVersion, targetForgeBuild, initialProgress, totalWeightForThisStep) {
+async function ensureMinecraftAndNeoForgeInstalled(targetMcVersion, targetNeoForgeProject, targetNeoForgeVersion, initialProgress, totalWeightForThisStep) {
     const mcRoot = getMinecraftRootPath();
-    log.info(`Ensuring Minecraft & Forge at ${mcRoot}...`);
+    log.info(`Ensuring Minecraft & NeoForge at ${mcRoot}...`);
     const minecraftLocation = new MinecraftFolder(mcRoot);
-    const currentJavaPath = await ensureJavaPath(minecraftLocation); // Java 경로는 별도 진행률 없음 (필요시 추가)
+    const currentJavaPath = await ensureJavaPath(minecraftLocation);
     const commonInstallOptions = { side: 'client', timeout: DOWNLOAD_TIMEOUT, retries: 3 };
 
-    // 이 단계의 가중치를 바닐라 설치와 포지/종속성 설치로 나눔
-    const vanillaInstallWeight = targetForgeBuild ? Math.floor(totalWeightForThisStep * 0.4) : totalWeightForThisStep;
-    const forgeAndDepsWeight = targetForgeBuild ? totalWeightForThisStep - vanillaInstallWeight : 0;
+    // 가중치 분배: 네오포지가 있으면 바닐라(40%) + 네오포지&종속성(60%), 없으면 바닐라(100%)
+    const vanillaInstallWeight = targetNeoForgeVersion ? Math.floor(totalWeightForThisStep * 0.4) : totalWeightForThisStep;
+    const loaderAndDepsWeight = targetNeoForgeVersion ? totalWeightForThisStep - vanillaInstallWeight : 0;
 
-    // 1. 바닐라 마인크래프트 설치
+    // 1. 바닐라 메타데이터 가져오기
     const versionList = await getVersionList();
     const vanillaVersionMeta = versionList.versions.find(v => v.id === targetMcVersion);
     if (!vanillaVersionMeta) throw new Error(`Vanilla metadata for ${targetMcVersion} not found.`);
+    
+    // 2. 바닐라 설치
     const vanillaInstallOp = installTask(vanillaVersionMeta, minecraftLocation, commonInstallOptions);
-    const resolvedVanillaVersion = await runTaskWithProgress(vanillaInstallOp, `바닐라 (${targetMcVersion}) 설치`, initialProgress, vanillaInstallWeight, 'install-vanilla');
+    const resolvedVanillaVersion = await runTaskWithRetry(
+        vanillaInstallOp, 
+        `바닐라 (${targetMcVersion}) 설치`, 
+        initialProgress, 
+        vanillaInstallWeight, 
+        'install-vanilla'
+    );
+    
     let currentOverallProgress = initialProgress + vanillaInstallWeight;
     let versionIdToLaunch = resolvedVanillaVersion.id;
 
-    // 2. 포지 설치
-    if (targetForgeMcVersion && targetForgeBuild) {
-        const forgeVersionMetaForTask = { mcversion: targetForgeMcVersion, version: targetForgeBuild };
-        const forgeSpecificInstallOptions = { java: currentJavaPath, ...commonInstallOptions };
-        const forgeInstallWeight = Math.floor(forgeAndDepsWeight * 0.6);
-        const forgeDepsWeight = forgeAndDepsWeight - forgeInstallWeight;
+    // 3. 네오포지 설치
+    if (targetNeoForgeProject && targetNeoForgeVersion) {
+        const neoForgeSpecificInstallOptions = { java: currentJavaPath, ...commonInstallOptions };
+        
+        // 네오포지 설치와 종속성 설치로 가중치 세분화
+        const loaderInstallWeight = Math.floor(loaderAndDepsWeight * 0.6);
+        const loaderDepsWeight = loaderAndDepsWeight - loaderInstallWeight;
 
-        const forgeInstallOp = installForgeTask(forgeVersionMetaForTask, minecraftLocation, forgeSpecificInstallOptions);
-        const installedForgeId = await runTaskWithProgress(forgeInstallOp, `포지 (${targetForgeBuild}) 설치`, currentOverallProgress, forgeInstallWeight, 'install-forge');
-        currentOverallProgress += forgeInstallWeight;
+        const neoForgeInstallOp = installNeoForgedTask(targetNeoForgeProject, targetNeoForgeVersion, minecraftLocation, neoForgeSpecificInstallOptions);
+        const installedNeoForgeId = await runTaskWithRetry(
+            neoForgeInstallOp, 
+            `네오포지 (${targetNeoForgeVersion}) 설치`, 
+            currentOverallProgress, 
+            loaderInstallWeight, 
+            'install-neoforge'
+        );
+        currentOverallProgress += loaderInstallWeight;
 
-        const resolvedForgeVersionAfterInstall = await Version.parse(minecraftLocation, installedForgeId);
-        const depsInstallOp = installDependenciesTask(resolvedForgeVersionAfterInstall, commonInstallOptions);
-        await runTaskWithProgress(depsInstallOp, `포지 종속성 설치 (${installedForgeId})`, currentOverallProgress, forgeDepsWeight, 'install-forge-deps');
-        versionIdToLaunch = installedForgeId;
+        const resolvedNeoForgeVersionAfterInstall = await Version.parse(minecraftLocation, installedNeoForgeId);
+        const depsInstallOp = installDependenciesTask(resolvedNeoForgeVersionAfterInstall, commonInstallOptions);
+        
+        await runTaskWithRetry(
+            depsInstallOp, 
+            `네오포지 종속성 설치 (${installedNeoForgeId})`, 
+            currentOverallProgress, 
+            loaderDepsWeight, 
+            'install-neoforge-deps'
+        );
+        versionIdToLaunch = installedNeoForgeId;
     } else {
-        // 바닐라 종속성 (이미 vanillaInstallWeight가 totalWeightForThisStep 전체를 차지했으므로 추가 가중치 없음, 또는 세분화)
+        // 바닐라만 설치하는 경우 종속성 확인
         const vanillaDepsOp = installDependenciesTask(resolvedVanillaVersion, commonInstallOptions);
-        // 바닐라 종속성은 바닐라 설치의 일부로 간주하거나, 매우 작은 가중치를 줄 수 있음
-        await runTaskWithProgress(vanillaDepsOp, `바닐라 종속성 설치 (${resolvedVanillaVersion.id})`, currentOverallProgress, 0, 'install-vanilla-deps');
+        await runTaskWithRetry(
+            vanillaDepsOp, 
+            `바닐라 종속성 설치 (${resolvedVanillaVersion.id})`, 
+            currentOverallProgress, 
+            0, // 남은 가중치 없음 (이미 위에서 할당됨)
+            'install-vanilla-deps'
+        );
     }
+
     return versionIdToLaunch;
 }
 
-
 /**
- * 실행에 필요한 인증 프로필 및 관련 정보를 LaunchOption 형태로 반환
- * @returns {Promise<Pick<LaunchOption, 'gameProfile' | 'accessToken' | 'userType' | 'properties'>>}
+ * 인증 정보 가져오기
  */
-async function getAuthParametersForLaunch() { // 함수 이름 변경 (더 명확하게)
+async function getAuthParametersForLaunch() {
     log.info("Attempting to get selected account from ConfigManager for launch parameters...");
     const selectedAccount = ConfigManager.getSelectedAccount();
 
-    log.info("Selected account object from ConfigManager:", JSON.stringify(selectedAccount, null, 2));
+    log.info("Selected account object:", JSON.stringify(selectedAccount, null, 2));
 
     if (!selectedAccount || typeof selectedAccount.username !== 'string' || typeof selectedAccount.uuid !== 'string' ||
         selectedAccount.type !== 'microsoft' || typeof selectedAccount.accessToken !== 'string' ||
         typeof selectedAccount.expiresAt !== 'number' ||
         typeof selectedAccount.msRefreshToken !== 'string') {
-        const msg = "Selected Microsoft account information is invalid or missing required fields for launch. Please login again.";
+        const msg = "Selected Microsoft account information is invalid. Please login again.";
         log.error(msg, selectedAccount);
         throw new Error(msg);
     }
 
-    log.info(`Preparing launch parameters for: ${selectedAccount.username} (UUID: ${selectedAccount.uuid})`);
+    log.info(`Preparing launch parameters for: ${selectedAccount.username}`);
 
-    let currentMcAccessToken = selectedAccount.accessToken; // confighandler에 저장된 Minecraft Access Token
+    let currentMcAccessToken = selectedAccount.accessToken;
     const mcTokenExpiresAt = selectedAccount.expiresAt;
     const msRefreshTokenFromConfig = selectedAccount.msRefreshToken;
 
@@ -322,8 +408,6 @@ async function getAuthParametersForLaunch() { // 함수 이름 변경 (더 명�
             if (refreshedData && refreshedData.mcAccessToken) {
                 currentMcAccessToken = refreshedData.mcAccessToken;
                 log.info(`Successfully refreshed Minecraft Access Token for ${selectedAccount.username}.`);
-                // selectedAccount의 이름이나 UUID도 refreshedData에서 가져온 값으로 업데이트 가능
-                // (단, ConfigManager가 이미 최신 정보로 업데이트했을 것임)
             } else {
                 throw new Error("Failed to refresh Minecraft Access Token (no token in response).");
             }
@@ -332,42 +416,39 @@ async function getAuthParametersForLaunch() { // 함수 이름 변경 (더 명�
             throw new Error(`Token refresh failed: ${error.message || 'Unknown error'}. Please try logging in again.`);
         }
     } else {
-        log.info(`Using existing valid Minecraft Access Token for ${selectedAccount.username}.`);
+        log.info(`Using existing valid Minecraft Access Token.`);
     }
 
     if (!currentMcAccessToken) throw new Error("Failed to obtain a valid Minecraft Access Token for launch.");
 
     return {
-        userType: 'msa', // Microsoft 계정이므로 'msa'
-        accessToken: currentMcAccessToken, // Minecraft 게임 세션용 액세스 토큰
+        userType: 'msa',
+        accessToken: currentMcAccessToken,
         gameProfile: {
-            id: selectedAccount.uuid.replace(/-/g, ""), // 대시(-) 없는 UUID
-            name: selectedAccount.username,             // Minecraft 사용자 이름
+            id: selectedAccount.uuid.replace(/-/g, ""),
+            name: selectedAccount.username,
         },
-        properties: {} // 일반적으로 비어있거나 '{}'. 필요시 채움.
+        properties: {}
     };
 }
 
 /**
- * 리소스 버전 체크 및 업데이트 (ZIP 다운로드 및 압축 해제)
- * @param {string} resourceRootPath 리소스가 설치될 루트 경로 (예: getMinecraftRootPath())
- * @returns {Promise<boolean>} 업데이트 성공 여부 또는 업데이트 필요 없었는지 여부
+ * 리소스 업데이트 (ZIP 다운로드 및 해제)
  */
-async function checkAndApplyResourceUpdate(resourceRootPath, logger, localVersionFileName, remoteVersionUrl, remoteZipUrl) { // 인자 이름을 명확히 하고, logger를 받도록 수정
-    logger.info('Checking for resource updates...'); // 전달받은 logger 사용
-    const localVersionFilePath = path.join(resourceRootPath, localVersionFileName); // 전달받은 파일 이름 사용
+async function checkAndApplyResourceUpdate(resourceRootPath, logger, localVersionFileName, remoteVersionUrl, remoteZipUrl) {
+    logger.info('Checking for resource updates...');
+    const localVersionFilePath = path.join(resourceRootPath, localVersionFileName);
     let localVersion = '0';
 
     try {
-        // fs는 const fs = require('fs-extra'); 로 정의된 것을 사용합니다.
-        if (fs.existsSync(localVersionFilePath)) { // fs-extra의 existsSync 사용
+        if (fs.existsSync(localVersionFilePath)) {
             localVersion = (await fs.readFile(localVersionFilePath, 'utf-8')).trim();
             logger.info(`Local resource version: ${localVersion}`);
         } else {
             logger.info('No local resource version file found. Assuming version 0.');
         }
 
-        logger.info(`Fetching remote resource version from: ${remoteVersionUrl}`); // 전달받은 URL 사용
+        logger.info(`Fetching remote resource version from: ${remoteVersionUrl}`);
         const response = await axios.get(remoteVersionUrl, { timeout: 5000 });
         const remoteVersion = response.data.toString().trim();
         logger.info(`Remote resource version: ${remoteVersion}`);
@@ -377,74 +458,59 @@ async function checkAndApplyResourceUpdate(resourceRootPath, logger, localVersio
             return true;
         }
 
-        logger.info(`Update required: Local version ${localVersion} -> Remote version ${remoteVersion}`);
-
-        logger.info(`Downloading resource ZIP from: ${remoteZipUrl}`); // 전달받은 URL 사용
+        logger.info(`Update required: Local ${localVersion} -> Remote ${remoteVersion}`);
+        logger.info(`Downloading resource ZIP from: ${remoteZipUrl}`);
+        
         const zipResponse = await axios({
             method: 'get',
             url: remoteZipUrl,
             responseType: 'arraybuffer',
-            timeout: 300000
+            timeout: 300000 // 5분
         });
         const zipBuffer = Buffer.from(zipResponse.data);
         logger.info('Resource ZIP downloaded successfully.');
 
+        // 안전한 삭제를 위해 try-catch로 감쌉니다.
         const modsFolderPath = path.join(resourceRootPath, 'mods');
         try {
-            if (fs.existsSync(modsFolderPath)) { // fs-extra의 existsSync 사용
-                logger.info(`Deleting existing mods folder: ${modsFolderPath}`);
-                await fs.remove(modsFolderPath); // fs-extra의 remove 함수 사용 (재귀적 삭제, 없어도 오류 X)
-                logger.info('Mods folder deleted successfully.');
-            } else {
-                logger.info('Mods folder not found, no deletion needed.');
+            if (fs.existsSync(modsFolderPath)) {
+                logger.info(`Deleting mods folder: ${modsFolderPath}`);
+                await fs.remove(modsFolderPath);
+                logger.info('Mods folder deleted.');
             }
         } catch (deleteError) {
-            logger.error(`Failed to delete mods folder: ${modsFolderPath}. Error: ${deleteError.message}`);
-            // return false; // 필요시 주석 해제하여 업데이트 중단
+            logger.error(`Failed to delete mods folder: ${deleteError.message}`);
         }
+
         const resourcePacksFolderPath = path.join(resourceRootPath, 'resourcepacks');
         try {
-            if (fs.existsSync(resourcePacksFolderPath)) { // fs-extra의 existsSync 사용
-                logger.info(`Deleting existing resourcePacksFolder folder: ${resourcePacksFolderPath}`);
-                await fs.remove(resourcePacksFolderPath); // fs-extra의 remove 함수 사용 (재귀적 삭제, 없어도 오류 X)
-                logger.info('ResourcePacksFolder folder deleted successfully.');
-            } else {
-                logger.info('ResourcePacksFolder folder not found, no deletion needed.');
+            if (fs.existsSync(resourcePacksFolderPath)) {
+                logger.info(`Deleting resourcepacks folder: ${resourcePacksFolderPath}`);
+                await fs.remove(resourcePacksFolderPath);
+                logger.info('Resourcepacks folder deleted.');
             }
         } catch (deleteError) {
-            logger.error(`Failed to delete resourcepacks folder: ${resourcePacksFolderPath}. Error: ${deleteError.message}`);
-            // return false; // 필요시 주석 해제하여 업데이트 중단
+            logger.error(`Failed to delete resourcepacks folder: ${deleteError.message}`);
         }
 
-        logger.info(`Extracting ZIP to: ${resourceRootPath} (overwrite enabled)`);
+        logger.info(`Extracting ZIP to: ${resourceRootPath}`);
         const zip = new AdmZip(zipBuffer);
-        zip.extractAllTo(resourceRootPath, true /* overwrite */);
+        zip.extractAllTo(resourceRootPath, true); // overwrite = true
         logger.info('ZIP extracted successfully.');
 
-        await fs.writeFile(localVersionFilePath, remoteVersion, 'utf-8'); // fs-extra의 writeFile 사용
+        await fs.writeFile(localVersionFilePath, remoteVersion, 'utf-8');
         logger.info(`Local resource version updated to: ${remoteVersion}`);
 
         return true;
 
     } catch (error) {
         logger.error('Failed to check or apply resource update:', error.message);
-        if (error.isAxiosError) {
-            logger.error('Axios error details:', {
-                url: error.config?.url,
-                method: error.config?.method,
-                status: error.response?.status,
-                // data: error.response?.data, // 데이터가 너무 크면 로그 생략 고려
-            });
-        }
         return false;
     }
 }
 
 /**
- * 게임 실행 (사용자 설정 반영)
- * @param {string} versionIdToLaunch 실행할 버전 ID
- * @param {Pick<LaunchOption, 'gameProfile' | 'accessToken' | 'userType' | 'properties'>} authParams 인증 파라미터
- * @returns {Promise<import('child_process').ChildProcess>}
+ * 게임 프로세스 시작
  */
 async function startGame(versionIdToLaunch, authParams) {
     const mcRoot = getMinecraftRootPath();
@@ -452,258 +518,159 @@ async function startGame(versionIdToLaunch, authParams) {
     const minecraftLocation = new MinecraftFolder(mcRoot);
     const currentJavaPath = await ensureJavaPath(minecraftLocation);
 
-    // --- ConfigManager에서 사용자 설정 가져오기 ---
-    const config = ConfigManager.getConfig(); // 전체 설정 객체 가져오기
+    const config = ConfigManager.getConfig();
     let gameSettings = config?.settings?.game;
 
     if (!gameSettings) {
-        log.warn('Game settings not found in ConfigManager. Using default launch options for memory/resolution.');
-        gameSettings = { // 폴백 기본값 (ConfigManager의 DEFAULT_CONFIG와 유사하게)
-            minMemoryMB: 1024, // ConfigManager의 기본값과 일치시키거나 더 안전한 값
-            maxMemoryMB: 4096, // ConfigManager의 기본값과 일치시키거나 더 안전한 값
-            resWidth: 1280,    // 안전한 기본 해상도
+        log.warn('Game settings not found. Using defaults.');
+        gameSettings = {
+            minMemoryMB: 1024,
+            maxMemoryMB: 4096,
+            resWidth: 1280,
             resHeight: 720,
             fullscreen: false,
-            // launchDetached, autoConnect 등 다른 설정도 필요시 여기에 기본값 추가
         };
     }
 
-    // 메모리 설정 (MB 단위)
     const minMemory = typeof gameSettings.minMemoryMB === 'number' && gameSettings.minMemoryMB >= 512 ? gameSettings.minMemoryMB : 1024;
     const maxMemory = typeof gameSettings.maxMemoryMB === 'number' && gameSettings.maxMemoryMB >= 1024 ? gameSettings.maxMemoryMB : 4096;
-    
-    // 해상도 설정
-    const gameResolutionWidth = typeof gameSettings.resWidth === 'number' && gameSettings.resWidth >= 800 ? gameSettings.resWidth : undefined; // undefined면 게임 기본값 사용
-    const gameResolutionHeight = typeof gameSettings.resHeight === 'number' && gameSettings.resHeight >= 600 ? gameSettings.resHeight : undefined; // undefined면 게임 기본값 사용
-    
-    // 전체화면 설정
+    const gameResolutionWidth = typeof gameSettings.resWidth === 'number' && gameSettings.resWidth >= 800 ? gameSettings.resWidth : undefined;
+    const gameResolutionHeight = typeof gameSettings.resHeight === 'number' && gameSettings.resHeight >= 600 ? gameSettings.resHeight : undefined;
     const fullscreen = typeof gameSettings.fullscreen === 'boolean' ? gameSettings.fullscreen : false;
 
-    log.info(`Applying game settings - Min Mem: ${minMemory}MB, Max Mem: ${maxMemory}MB, Resolution: ${gameResolutionWidth || 'Default'}x${gameResolutionHeight || 'Default'}, Fullscreen: ${fullscreen}`);
+    log.info(`Applying game settings - Min: ${minMemory}MB, Max: ${maxMemory}MB, Fullscreen: ${fullscreen}`);
 
-    // LaunchOption 구성
-    const launchOptions /*: LaunchOption*/ = { // 타입 명시 (선택적)
+    const launchOptions = {
         version: versionIdToLaunch,
         gamePath: minecraftLocation.root,
         javaPath: currentJavaPath,
-
         userType: authParams.userType,
         accessToken: authParams.accessToken,
         gameProfile: authParams.gameProfile,
         properties: authParams.properties,
-
-        minMemory: minMemory, // MB 단위
-        maxMemory: maxMemory, // MB 단위
+        minMemory: minMemory,
+        maxMemory: maxMemory,
         resolution: { width: gameResolutionWidth, height: gameResolutionHeight, fullscreen: fullscreen },
-
-        // 기존 extraExecOption 유지 또는 ConfigManager에서 가져오기
-        extraExecOption: { detached: true, stdio: 'ignore' } // 예시
-        // server: config?.settings?.game?.autoConnect && config?.selectedServer ? { host: config.selectedServer.host, port: config.selectedServer.port } : undefined,
+        extraExecOption: { detached: true, stdio: 'ignore' }
     };
 
-    log.info('Launching Minecraft with options:', {
-        ...launchOptions,
-        accessToken: launchOptions.accessToken ? "HIDDEN" : "NONE",
-    });
-
+    log.info('Launching Minecraft with options (token hidden).');
     const process = await launch(launchOptions);
 
     log.info(`Minecraft process started with PID: ${process.pid}`);
     if (process && typeof process.unref === 'function') {
         process.unref();
-        log.info(`Minecraft process (PID: ${process.pid}) unref'd.`);
     }
-    process.on('error', (err) => { log.error(`Minecraft process (PID: ${process.pid}) error:`, err); });
-    process.on('exit', (code, signal) => { log.info(`Minecraft process (PID: ${process.pid}) exited with code ${code}, signal ${signal}`); });
+    process.on('error', (err) => { log.error(`Minecraft process error:`, err); });
+    process.on('exit', (code, signal) => { log.info(`Minecraft process exited with code ${code}, signal ${signal}`); });
 
     return process;
 }
 
-// --- 진행률 업데이트 IPC 전송 함수 ---
-function sendProgressUpdate(eventChannel, data) {
-    if (targetWindowForProgress && !targetWindowForProgress.isDestroyed()) {
-        targetWindowForProgress.webContents.send(eventChannel, data);
-    } else {
-        log.warn(`[GameLauncher - sendProgressUpdate] Target window for progress is not available or destroyed. Channel: ${eventChannel}`);
-    }
-}
-
-/**
- * Task 실행 및 진행률 로깅 + IPC 전송을 위한 헬퍼 함수
- * @param {import('@xmcl/task').Task<any>} taskInstance 실행할 xmcl Task 객체
- * @param {string} taskDescription 로깅 및 모달 메시지용 작업 설명
- * @param {string} overallTaskKey 전체 작업 단계를 구분하는 키 (선택적)
- * @returns {Promise<any>} Task의 결과값
- */
-async function runTaskWithProgress(taskInstance, taskDescription, baseProgress, taskWeight, overallTaskKey = 'generic-task') {
-    log.info(`Starting task: ${taskDescription} (Path: ${taskInstance.path || 'N/A'})`);
-    // 태스크 시작 시, baseProgress + 0% 로 업데이트
-    sendProgressUpdate('launch-progress-update', {
-        message: `${taskDescription} 시작 중...`,
-        progress: baseProgress, // 이 태스크의 시작점 진행률
-        details: `Task: ${taskInstance.name || taskDescription}`,
-        taskKey: overallTaskKey
-    });
-
-    let lastLoggedProgress = -1;
-    let lastSentOverallProgress = baseProgress;
-
-    try {
-        const result = await taskInstance.startAndWait({
-            onStart(task) {
-                log.info(` -> Sub-task started: ${task.name || 'Unnamed Subtask'} (Path: ${task.path})`);
-                sendProgressUpdate('launch-progress-update', {
-                    message: taskDescription,
-                    details: `진행 중: ${task.path || task.name || '세부 작업'}`,
-                    progress: baseProgress + (taskInstance.total > 0 ? Math.round((taskInstance.progress / taskInstance.total) * taskWeight * 0.01) : 0),
-                    taskKey: overallTaskKey
-                });
-            },
-            onUpdate(task, chunkSize) {
-                if (taskInstance.total > 0) {
-                    const taskProgressPercent = (taskInstance.progress / taskInstance.total); // 현재 태스크의 진행률 (0 ~ 1)
-                    const currentOverallProgress = Math.round(baseProgress + (taskProgressPercent * taskWeight));
-
-                    if (currentOverallProgress !== lastSentOverallProgress && currentOverallProgress % 2 === 0) { // 2% 단위로 IPC (너무 잦지 않게)
-                        sendProgressUpdate('launch-progress-update', {
-                            message: taskDescription,
-                            progress: currentOverallProgress,
-                            details: `다운로드 중: ${task.path || task.name || '파일'}... (${Math.round(taskProgressPercent*100)}%)`,
-                            taskKey: overallTaskKey
-                        });
-                        lastSentOverallProgress = currentOverallProgress;
-                    }
-                    if (currentOverallProgress % 5 === 0 && currentOverallProgress !== lastLoggedProgress) { // 5% 단위로 로그
-                        log.info(` -> Overall task [${taskDescription}] (sub-task) progress: ${Math.round(taskProgressPercent*100)}%, Total progress: ${currentOverallProgress}%`);
-                        lastLoggedProgress = currentOverallProgress;
-                    }
-                }
-            },
-            onFailed(task, error) { /* ... 이전과 동일 (progress는 lastSentOverallProgress 사용) ... */
-                log.error(` -> Sub-task failed: ${task.name || 'Unnamed Subtask'} (Path: ${task.path})`, error);
-                sendProgressUpdate('launch-progress-update', {
-                    message: `${taskDescription} 중 오류 발생`,
-                    progress: lastSentOverallProgress,
-                    details: `오류: ${task.name || '세부 작업'} - ${error.message}`,
-                    isError: true,
-                    taskKey: overallTaskKey
-                });
-            },
-            onSucceed(task, taskResult) { /* ... 이전과 동일 ... */ },
-        });
-        log.info(`Task completed: ${taskDescription}`);
-        // 태스크 완료 시, 이 태스크에 할당된 가중치만큼 진행률을 더함
-        sendProgressUpdate('launch-progress-update', {
-            message: `${taskDescription} 완료!`,
-            progress: baseProgress + taskWeight,
-            details: `완료: ${taskDescription}`,
-            taskKey: overallTaskKey
-        });
-        return result;
-    } catch (error) {
-        log.error(`Error during task execution [${taskDescription}]:`, error);
-        sendProgressUpdate('launch-progress-update', {
-            message: `${taskDescription} 실패`,
-            progress: lastSentOverallProgress, // 실패 시 이전 진행률
-            details: `실패: ${error.message}`,
-            isError: true,
-            taskKey: overallTaskKey
-        });
-        throw error;
-    }
-}
 // --- 메인 실행 함수 ---
 async function launchMinecraftGame(windowToUpdate) {
     if (!windowToUpdate || typeof windowToUpdate.webContents?.send !== 'function') {
-        log.error('[launchMinecraftGame] Invalid window object provided for progress updates.');
-        // 오류 처리가 필요합니다. 여기서는 간단히 로그만 남기고 진행하지만,
-        // 실제로는 오류를 throw하거나, 진행률 업데이트 없이 진행할지 결정해야 합니다.
+        log.error('[launchMinecraftGame] Invalid window object provided.');
+        // UI가 없더라도 백그라운드에서 진행될 수도 있으므로 return은 하지 않음 (상황에 따라 결정)
     }
-    targetWindowForProgress = windowToUpdate; // 함수 스코프 변수에 할당
+    targetWindowForProgress = windowToUpdate;
     
     sendProgressUpdate('launch-progress-start', { title: '게임 실행 준비' });
+    
+    // 전체 진행률 단계 가중치 설정 (총합 100)
+    const STAGE_WEIGHTS = {
+        INIT: 5,
+        AUTH: 5,
+        INSTALL_CHECK: 60, // 다운로드/설치 (가장 큼)
+        CUSTOM_RESOURCE_UPDATE: 15,
+        PRE_LAUNCH: 5,
+        GAME_STARTING: 10
+    };
+
     let overallProgress = 0;
 
     try {
         log.info('Starting Minecraft launch sequence...');
-        // 단계별 예상 진행률 가중치 (총합 100 기준, 조절 가능)
-        const STAGE_WEIGHTS = {
-            INIT: 5,
-            AUTH: 5,
-            INSTALL_CHECK: 60, // 가장 오래 걸리는 부분
-            CUSTOM_RESOURCE_UPDATE: 15,
-            PRE_LAUNCH: 5,
-            GAME_STARTING_MESSAGE: 10 // 게임 시작 직전 메시지까지
-        };
 
+        // 1. 초기화
         overallProgress = STAGE_WEIGHTS.INIT;
-        sendProgressUpdate('launch-progress-update', { message: '설정 및 계정 정보 확인 중...', progress: overallProgress, taskKey: 'init' });
-        if (!ConfigManager.isLoaded()) { throw new Error('ConfigManager is not loaded.'); }
+        sendProgressUpdate('launch-progress-update', { message: '설정 확인 중...', progress: overallProgress, taskKey: 'init' });
+        if (!ConfigManager.isLoaded()) throw new Error('ConfigManager is not loaded.');
 
+        // 2. 인증
         overallProgress += STAGE_WEIGHTS.AUTH;
-        sendProgressUpdate('launch-progress-update', { message: '인증 정보 확인 중...', progress: overallProgress, taskKey: 'auth' });
+        sendProgressUpdate('launch-progress-update', { message: '계정 인증 중...', progress: overallProgress, taskKey: 'auth' });
         const authParams = await getAuthParametersForLaunch();
 
+        // 3. 설치 확인 (바닐라/네오포지/종속성)
         sendProgressUpdate('launch-progress-update', { message: '게임 파일 설치 확인 중...', progress: overallProgress, taskKey: 'install-check-start' });
-        const versionIdToLaunch = await ensureMinecraftAndForgeInstalled(
+        
+        const versionIdToLaunch = await ensureMinecraftAndNeoForgeInstalled(
             MINECRAFT_VERSION_TARGET,
-            FORGE_MC_VERSION,
-            FORGE_BUILD_VERSION,
-            overallProgress, // 현재까지의 전체 진행률
-            STAGE_WEIGHTS.INSTALL_CHECK // 이 단계에 할당된 가중치
+            NEOFORGE_PROJECT,
+            NEOFORGE_VERSION,
+            overallProgress, // 현재 누적 진행률
+            STAGE_WEIGHTS.INSTALL_CHECK // 이 단계의 총 가중치
         );
-        overallProgress += STAGE_WEIGHTS.INSTALL_CHECK; // 설치 단계 완료 후 진행률 업데이트
-        // ensureMinecraftAndForgeInstalled 내부에서 runTaskWithProgress가 세부 진행률 IPC를 보냄
+        overallProgress += STAGE_WEIGHTS.INSTALL_CHECK;
 
-        sendProgressUpdate('launch-progress-update', { message: '커스텀 리소스 업데이트 확인 중...', progress: overallProgress, taskKey: 'custom-resource-update-check' });
+        // 4. 커스텀 리소스 업데이트
+        sendProgressUpdate('launch-progress-update', { message: '리소스 업데이트 확인 중...', progress: overallProgress, taskKey: 'custom-resource-update-check' });
         const gameRootPath = getMinecraftRootPath();
-        // --- 수정된 호출 부분 ---
         const updateSuccessful = await checkAndApplyResourceUpdate(
             gameRootPath,
-            log, // launch.js에 정의된 log 객체 전달
-            LOCAL_VERSION_FILE_NAME, // launch.js에 정의된 상수 전달
-            RESOURCE_VERSION_URL,    // launch.js에 정의된 상수 전달
-            RESOURCE_ZIP_URL         // launch.js에 정의된 상수 전달
+            log,
+            LOCAL_VERSION_FILE_NAME,
+            RESOURCE_VERSION_URL,
+            RESOURCE_ZIP_URL
         );
-        // --- --- --- --- --- ---
-        // checkAndApplyResourceUpdate 내부에서도 진행률 메시지 전송 가능 (여기서는 간단히 완료 후 업데이트)
         overallProgress += STAGE_WEIGHTS.CUSTOM_RESOURCE_UPDATE;
+
         if (!updateSuccessful) {
-            log.warn('Resource update failed or was skipped.');
-            sendProgressUpdate('launch-progress-update', { message: '커스텀 리소스 업데이트 실패 또는 생략됨.', progress: overallProgress, taskKey: 'custom-resource-update-result', isWarning: true });
+            log.warn('Resource update skipped or failed.');
+            sendProgressUpdate('launch-progress-update', { message: '리소스 업데이트 건너뜀', progress: overallProgress, taskKey: 'custom-resource-update-result', isWarning: true });
         } else {
-            sendProgressUpdate('launch-progress-update', { message: '커스텀 리소스 업데이트 완료.', progress: overallProgress, taskKey: 'custom-resource-update-result' });
+            sendProgressUpdate('launch-progress-update', { message: '리소스 업데이트 완료', progress: overallProgress, taskKey: 'custom-resource-update-result' });
         }
 
+        // 5. 실행 준비 및 실행
         overallProgress += STAGE_WEIGHTS.PRE_LAUNCH;
         sendProgressUpdate('launch-progress-update', { message: '게임 실행 준비 중...', progress: overallProgress, taskKey: 'pre-launch' });
+        
         const mcProcess = await startGame(versionIdToLaunch, authParams);
 
         if (mcProcess && mcProcess.pid) {
-            log.info(`Minecraft process (PID: ${mcProcess.pid}) has been launched.`);
-            overallProgress = 100; // 최종 단계
+            log.info(`Minecraft process (PID: ${mcProcess.pid}) launched.`);
+            overallProgress = 100;
             sendProgressUpdate('launch-progress-update', {
                 title: '게임 실행 준비 완료!',
-                message: '곧 게임이 시작됩니다...',
+                message: '게임이 곧 시작됩니다.',
                 progress: overallProgress,
-                details: `게임 프로세스 ID: ${mcProcess.pid}`,
+                details: `PID: ${mcProcess.pid}`,
                 taskKey: 'game-starting'
             });
-            sendProgressUpdate('launch-progress-complete', { success: true, message: '게임이 성공적으로 실행되었습니다.' });
+            sendProgressUpdate('launch-progress-complete', { success: true, message: '게임 실행 성공' });
             return { success: true, message: 'Minecraft launched.', launchedPID: mcProcess.pid };
         } else {
-            throw new Error('게임 실행 후 프로세스 정보를 가져오지 못했습니다.');
+            throw new Error('게임 프로세스를 시작하지 못했습니다.');
         }
+
     } catch (error) {
-        log.error('Minecraft launch sequence failed:', error.message);
-        let displayMessage = `게임 실행 실패: ${error.message || '알 수 없는 오류'}`;
-        // ... (displayMessage 생성 로직) ...
-        log.error('Detailed error stack for launch failure:', error.stack);
+        log.error('Minecraft launch sequence failed:', error);
+
+        // "알 수 없는 오류" 방지를 위해 에러 상세 내용을 문자열로 변환
+        const detailedError = error.message || JSON.stringify(error, Object.getOwnPropertyNames(error)) || 'Unknown error occurred';
+        let displayMessage = `게임 실행 실패: ${detailedError}`;
+
+        // 사용자에게 보여줄 메시지 정제
+        if (detailedError.includes('ETIMEDOUT')) displayMessage = '네트워크 연결 시간 초과. 인터넷 상태를 확인해주세요.';
+        if (detailedError.includes('429')) displayMessage = '다운로드 요청이 너무 많습니다 (Dropbox 제한). 잠시 후 다시 시도해주세요.';
+
         sendProgressUpdate('launch-progress-complete', {
             success: false,
             message: displayMessage,
-            error: error.message,
-            progress: overallProgress // 실패 시점의 진행률
+            error: detailedError,
+            progress: overallProgress
         });
         return { success: false, message: displayMessage };
     }

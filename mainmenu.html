@@ -2,34 +2,53 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Main Menu</title>
-    
-    <style>
-        /* 1. (추가) html 요소의 배경을 투명하게 만들어 윈도우의 투명함이 드러나게 합니다. */
-        html {
-            background: transparent;
-        }
-
-        /* 2. body, html 기본 설정 */
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden; 
-        }
-
-        /* 3. body 배경 이미지 설정 */
-        body {
-            background-image: url('assets/main_background.png');
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-        }
-    </style>
+    <title>힐링캠프</title>
+    <!-- css/mainmenu.css 파일을 연결합니다 -->
+    <link rel="stylesheet" href="./css/mainmenu.css">
 </head>
 <body>
-    <!-- 콘텐츠 -->
+    <div class="app-container">
+        <!-- 배경 이미지 -->
+        <img src="./assets/mainmenu.png" alt="메인 메뉴 티켓" class="main-image">
+
+        <div id="player-skin-container" class="player-skin">
+            <!-- 기본 스킨 이미지 또는 로딩 중 이미지 (선택 사항) -->
+            <img id="player-skin-image" src="https://nmsr.nickac.dev/face/steve" alt="플레이어 스킨">
+        </div>
+        
+        <!-- 투명 버튼들 (ID를 mainmenu.js에 맞게 수정) -->
+        <button id="settingsButton" class="clickable-area settings-btn" aria-label="게임 설정"></button>
+        <button id="logoutButton" class="clickable-area logout-btn" aria-label="로그아웃"></button>
+        <!-- 'launchButton'을 'launchGameButton'으로 변경 -->
+        <button id="launchGameButton" class="clickable-area launch-btn" aria-label="출발"></button>
+
+        <!-- 창 닫기 버튼 -->
+        <div class="window-controls">
+            <button id="close-btn" title="닫기" aria-label="닫기">×</button>
+        </div>
+    </div>
+
+    <!-- 오버레이 및 모달 창 HTML (mainmenu.js에서 사용) -->
+    <div id="overlay" class="overlay">
+        <div id="settings-view-placeholder" class="view-content">
+        <!-- 설정 창 내용은 JS를 통해 여기에 로드됩니다. -->
+        </div>
+    </div>
+
+    <div id="progress-modal-overlay" class="overlay">
+        <div id="progress-modal" class="modal-container">
+            <h3 id="progress-modal-title">게임 준비 중...</h3>
+            <div id="progress-modal-message">잠시만 기다려주세요...</div>
+            <div class="progress-bar-container">
+                <div id="progress-bar" class="progress-bar-fill"></div>
+            </div>
+            <div id="progress-modal-details"></div>
+        </div>
+    </div>
+
+    <!-- mainmenu.js와 settings.js(필요하다면)를 연결합니다. -->
+    <script src="./js/mainmenu.js"></script>
+    <!-- 설정 창 내부 로직이 별도 파일에 있다면 연결합니다. -->
+    <script src="./js/settings.js"></script>
 </body>
 </html>
-    

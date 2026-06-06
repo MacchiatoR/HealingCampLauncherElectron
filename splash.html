@@ -1,46 +1,376 @@
-      
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Loading...</title>
+    <title>HealingCamp Launcher</title>
     <style>
+        :root {
+            color-scheme: dark;
+            --surface: rgba(18, 19, 21, 0.94);
+            --surface-soft: rgba(255, 255, 255, 0.08);
+            --surface-line: rgba(255, 255, 255, 0.16);
+            --text: #f5f7fb;
+            --muted: #aeb6c4;
+            --accent: #77d2b4;
+            --accent-strong: #54bd9b;
+            --warn: #f0b35d;
+            --error: #ff756e;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             margin: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
             height: 100vh;
-            /* background-color: transparent; */
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            font-family: "Segoe UI", "Malgun Gothic", sans-serif;
+            color: var(--text);
+            user-select: none;
+        }
+
+        .shell {
+            width: 500px;
+            min-height: 500px;
+            padding: 28px;
+            border: 1px solid var(--surface-line);
+            border-radius: 8px;
+            background: var(--surface);
+            box-shadow: 0 26px 70px rgba(0, 0, 0, 0.42);
+            display: flex;
+            flex-direction: column;
+            gap: 22px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            min-height: 88px;
+        }
+
+        .brand img {
+            width: 84px;
+            height: 84px;
+            object-fit: contain;
+            flex: 0 0 auto;
+        }
+
+        .brand-copy {
+            min-width: 0;
+        }
+
+        .app-name {
+            margin: 0 0 6px;
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: 0;
+        }
+
+        .version {
+            margin: 0;
+            font-size: 13px;
+            color: var(--muted);
+            min-height: 18px;
+        }
+
+        .status {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .eyebrow {
+            width: fit-content;
+            max-width: 100%;
+            padding: 5px 9px;
+            border: 1px solid var(--surface-line);
+            border-radius: 8px;
+            background: var(--surface-soft);
+            font-size: 12px;
+            color: var(--accent);
+        }
+
+        .title {
+            margin: 0;
+            font-size: 24px;
+            line-height: 1.26;
+            font-weight: 700;
+            letter-spacing: 0;
+        }
+
+        .detail {
+            margin: 0;
+            min-height: 46px;
+            font-size: 14px;
+            line-height: 1.55;
+            color: var(--muted);
+            overflow-wrap: anywhere;
+        }
+
+        .progress-track {
+            height: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--surface-line);
+            background: rgba(255, 255, 255, 0.07);
             overflow: hidden;
         }
-        #splash-logo {
-            width: 400px;
-            height: 400px;
-            object-fit: contain; /* 이미지 비율 유지하며 400x400 안에 모두 보이도록 */
-            opacity: 0;
-            animation: fadeInOut 3s ease-in-out forwards;
+
+        .progress-fill {
+            width: 10%;
+            height: 100%;
+            border-radius: inherit;
+            background: var(--accent);
+            transition: width 180ms ease, background 180ms ease;
         }
-        @keyframes fadeInOut {
-            0% { opacity: 0; }
-            50% { opacity: 1; }
-            100% { opacity: 0; }
+
+        .progress-fill.indeterminate {
+            width: 36%;
+            animation: sweep 1.15s ease-in-out infinite;
+        }
+
+        @keyframes sweep {
+            0% { transform: translateX(-105%); }
+            100% { transform: translateX(285%); }
+        }
+
+        .meta {
+            min-height: 20px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: auto;
+            min-height: 40px;
+        }
+
+        button {
+            height: 40px;
+            min-width: 104px;
+            padding: 0 16px;
+            border: 1px solid var(--surface-line);
+            border-radius: 8px;
+            background: var(--surface-soft);
+            color: var(--text);
+            font: inherit;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        button.primary {
+            border-color: transparent;
+            background: var(--accent-strong);
+            color: #081411;
+            font-weight: 700;
+        }
+
+        button.danger {
+            border-color: rgba(255, 117, 110, 0.42);
+            color: #ffd9d6;
+        }
+
+        button:disabled {
+            opacity: 0.48;
+            cursor: default;
         }
     </style>
 </head>
 <body>
-    <img src="./assets/logo.png" alt="App Logo" id="splash-logo">
+    <main class="shell">
+        <section class="brand">
+            <img src="./assets/logo.png" alt="">
+            <div class="brand-copy">
+                <h1 class="app-name">HealingCamp Launcher</h1>
+                <p class="version" id="versionText"></p>
+            </div>
+        </section>
+
+        <section class="status">
+            <div class="eyebrow" id="eyebrow">시작 중</div>
+            <h2 class="title" id="statusTitle">런처를 준비하고 있습니다</h2>
+            <p class="detail" id="statusDetail">잠시만 기다려주세요.</p>
+            <div class="progress-track" aria-hidden="true">
+                <div class="progress-fill indeterminate" id="progressFill"></div>
+            </div>
+            <div class="meta" id="metaText"></div>
+        </section>
+
+        <section class="actions" id="actions"></section>
+    </main>
+
     <script>
-        const splashLogo = document.getElementById('splash-logo');
-        splashLogo.addEventListener('animationend', () => {
+        const eyebrow = document.getElementById('eyebrow');
+        const statusTitle = document.getElementById('statusTitle');
+        const statusDetail = document.getElementById('statusDetail');
+        const progressFill = document.getElementById('progressFill');
+        const metaText = document.getElementById('metaText');
+        const actions = document.getElementById('actions');
+        const versionText = document.getElementById('versionText');
+
+        let hasStartedUpdateCheck = false;
+
+        function sendAction(action, data) {
+            if (window.electronAPI && window.electronAPI.sendAutoUpdateAction) {
+                window.electronAPI.sendAutoUpdateAction(action, data);
+            }
+        }
+
+        function setActions(buttons) {
+            actions.replaceChildren();
+            for (const button of buttons) {
+                const element = document.createElement('button');
+                element.textContent = button.label;
+                element.className = button.kind || '';
+                element.addEventListener('click', button.onClick);
+                actions.appendChild(element);
+            }
+        }
+
+        function setProgress(value, options = {}) {
+            progressFill.classList.toggle('indeterminate', !!options.indeterminate);
+            if (typeof value === 'number') {
+                progressFill.style.width = `${Math.max(0, Math.min(100, value))}%`;
+            }
+            progressFill.style.background = options.color || 'var(--accent)';
+        }
+
+        function setState({ badge, title, detail, meta = '', progress = 0, indeterminate = false, color, buttons = [] }) {
+            eyebrow.textContent = badge;
+            statusTitle.textContent = title;
+            statusDetail.textContent = detail;
+            metaText.textContent = meta;
+            setProgress(progress, { indeterminate, color });
+            setActions(buttons);
+        }
+
+        function formatBytes(bytes) {
+            if (!Number.isFinite(bytes) || bytes <= 0) return '';
+            const units = ['B', 'KB', 'MB', 'GB'];
+            let value = bytes;
+            let unit = 0;
+            while (value >= 1024 && unit < units.length - 1) {
+                value /= 1024;
+                unit++;
+            }
+            return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+        }
+
+        function startUpdateCheckOnce() {
+            if (hasStartedUpdateCheck) return;
+            hasStartedUpdateCheck = true;
             if (window.electronAPI && window.electronAPI.splashDone) {
                 window.electronAPI.splashDone();
-            } else {
-                console.warn("electronAPI.splashDone not found. Main window might not open automatically if relying on IPC.");
             }
-        });
+        }
+
+        function handleUpdateNotification(status, data = {}) {
+            if (data.currentVersion) {
+                versionText.textContent = `현재 버전 ${data.currentVersion}`;
+            }
+
+            switch (status) {
+                case 'ready':
+                    if (data.currentVersion) versionText.textContent = `현재 버전 ${data.currentVersion}`;
+                    break;
+                case 'checking-for-update':
+                    setState({
+                        badge: '업데이트 확인',
+                        title: '새 버전을 확인하고 있습니다',
+                        detail: '런처 시작 전에 사용할 수 있는 업데이트가 있는지 확인합니다.',
+                        indeterminate: true
+                    });
+                    break;
+                case 'update-not-available':
+                    setState({
+                        badge: '최신 상태',
+                        title: '최신 버전입니다',
+                        detail: '곧 로그인 화면으로 이동합니다.',
+                        progress: 100
+                    });
+                    break;
+                case 'update-available':
+                    setState({
+                        badge: '업데이트 발견',
+                        title: `버전 ${data.version || '새 버전'}을 사용할 수 있습니다`,
+                        detail: '지금 다운로드하면 재시작 후 바로 새 런처가 적용됩니다.',
+                        meta: data.releaseDate ? `릴리즈 날짜 ${new Date(data.releaseDate).toLocaleString()}` : '',
+                        progress: 0,
+                        buttons: [
+                            { label: '업데이트', kind: 'primary', onClick: () => sendAction('downloadUpdate') },
+                            { label: '나중에', onClick: () => sendAction('continueToLogin') }
+                        ]
+                    });
+                    break;
+                case 'download-started':
+                    setState({
+                        badge: '다운로드',
+                        title: '업데이트 다운로드를 시작합니다',
+                        detail: '네트워크 상태에 따라 시간이 걸릴 수 있습니다.',
+                        indeterminate: true
+                    });
+                    break;
+                case 'download-progress': {
+                    const percent = Math.round(data.percent || 0);
+                    const transferred = formatBytes(data.transferred);
+                    const total = formatBytes(data.total);
+                    const speed = formatBytes(data.bytesPerSecond);
+                    setState({
+                        badge: '다운로드',
+                        title: `업데이트 다운로드 중 ${percent}%`,
+                        detail: '다운로드가 끝나면 설치 준비가 완료됩니다.',
+                        meta: [transferred && total ? `${transferred} / ${total}` : '', speed ? `${speed}/s` : ''].filter(Boolean).join(' · '),
+                        progress: percent,
+                        buttons: [
+                            { label: '나중에', onClick: () => sendAction('continueToLogin') }
+                        ]
+                    });
+                    break;
+                }
+                case 'update-downloaded':
+                    setState({
+                        badge: '설치 준비 완료',
+                        title: `버전 ${data.version || '새 버전'} 다운로드 완료`,
+                        detail: '지금 재시작하면 업데이트가 설치됩니다.',
+                        progress: 100,
+                        buttons: [
+                            { label: '재시작', kind: 'primary', onClick: () => sendAction('installUpdateNow') },
+                            { label: '나중에', onClick: () => sendAction('continueToLogin') }
+                        ]
+                    });
+                    break;
+                case 'realerror':
+                    setState({
+                        badge: '확인 실패',
+                        title: '업데이트를 확인하지 못했습니다',
+                        detail: data.message || '알 수 없는 오류가 발생했습니다.',
+                        progress: 100,
+                        color: 'var(--error)',
+                        buttons: [
+                            { label: '다시 시도', kind: 'primary', onClick: () => sendAction('retryUpdate') },
+                            { label: '계속 실행', onClick: () => sendAction('continueToLogin') },
+                            { label: '종료', kind: 'danger', onClick: () => sendAction('quitApp') }
+                        ]
+                    });
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        if (window.electronAPI && window.electronAPI.onAutoUpdateNotification) {
+            window.electronAPI.onAutoUpdateNotification(handleUpdateNotification);
+        }
+
+        sendAction('registerUpdateWindow');
+        setTimeout(startUpdateCheckOnce, 900);
     </script>
 </body>
 </html>
-
-    

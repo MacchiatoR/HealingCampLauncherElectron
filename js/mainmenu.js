@@ -13,12 +13,15 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
+    const appContainer = document.querySelector('.app-container');
     const settingsButton = document.getElementById('settingsButton');
     const logoutButton = document.getElementById('logoutButton');
     const launchGameButton = document.getElementById('launchGameButton');
     const closeBtn = document.getElementById('close-btn');
     const settingsViewPlaceholder = document.getElementById('settings-view-placeholder');
     const overlay = document.querySelector('.overlay');
+    const playerSkinContainer = document.getElementById('player-skin-container');
+    const playerSkinImage = document.getElementById('player-skin-image');
     const FADE_DURATION = 300;
 
     // --- 진행률 모달 DOM 요소 ---
@@ -27,6 +30,57 @@ document.addEventListener('DOMContentLoaded', () => {
     const progressModalMessage = document.getElementById('progress-modal-message');
     const progressBar = document.getElementById('progress-bar');
     const progressModalDetails = document.getElementById('progress-modal-details');
+
+    async function loadPlayerSkin() {
+        console.log('[MainMenuJS] Attempting to load player skin...');
+        
+        // --- ↓↓↓ 디버깅 로그 추가 ↓↓↓ ---
+        console.log('[MainMenuJS] Checking electronAPI object:', window.electronAPI);
+        if (window.electronAPI) {
+            console.log('[MainMenuJS] Checking getSelectedAccount function:', typeof window.electronAPI.getSelectedAccount);
+        }
+        // --- ↑↑↑ 디버깅 로그 끝 ↑↑↑ ---
+
+        if (!electronAPI || typeof electronAPI.getSelectedAccount !== 'function') {
+            console.error('[MainMenuJS] electronAPI.getSelectedAccount is not available. Cannot load skin.');
+            if (playerSkinContainer) playerSkinContainer.style.display = 'none';
+            return;
+        }
+
+        try {
+            const account = await electronAPI.getSelectedAccount();
+            console.log('[MainMenuJS] Received account data from main process:', account); // 로그 메시지 수정
+
+            if (account && account.uuid) {
+                const uuid = account.uuid;
+                const skinUrl = `https://nmsr.nickac.dev/face/${uuid}`;
+                
+                console.log(`[MainMenuJS] Setting skin URL to: ${skinUrl}`);
+                
+                playerSkinImage.onload = () => {
+                    console.log('[MainMenuJS] Skin image loaded successfully.');
+                    playerSkinContainer.classList.add('visible');
+                };
+                
+                playerSkinImage.onerror = () => {
+                    console.error('[MainMenuJS] Failed to load skin image. Falling back to default.');
+                    playerSkinImage.src = 'https://nmsr.nickac.dev/face/steve';
+                    playerSkinContainer.classList.add('visible');
+                };
+                
+                playerSkinImage.src = skinUrl;
+
+            } else {
+                console.log('[MainMenuJS] No valid account (or UUID) found in received data. Using default skin.'); // 로그 메시지 수정
+                playerSkinImage.src = 'https://nmsr.nickac.dev/face/steve';
+                playerSkinContainer.classList.add('visible');
+            }
+        } catch (error) {
+            console.error('[MainMenuJS] Error during getSelectedAccount call:', error); // 에러 로그 강화
+            playerSkinImage.src = 'https://nmsr.nickac.dev/face/steve';
+            playerSkinContainer.classList.add('visible');
+        }
+    }
 
     // --- 창 닫기 버튼 이벤트 ---
     if (closeBtn) {
@@ -318,45 +372,30 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- 화면(뷰) 전환 및 오버레이 관리 함수 ---
-    function manageViewAndOverlay(viewElement, show = false, showOverlay = false) {
-        console.log(`[MainMenuJS - manageViewAndOverlay] Target: ${viewElement ? viewElement.id : 'overlay only'}, Show: ${show}, ShowOverlay: ${showOverlay}`);
+    function manageViewAndOverlay(viewElement, show = false) {
+    console.log(`[MainMenuJS - manageViewAndOverlay] Target: ${viewElement ? viewElement.id : 'N/A'}, Show: ${show}`);
 
-        if (overlay) {
-            if (showOverlay) {
-                overlay.style.pointerEvents = 'auto';
-                overlay.classList.add('visible');
-            } else {
-                overlay.classList.remove('visible');
-                setTimeout(() => {
-                    if (!overlay.classList.contains('visible')) {
-                        overlay.style.pointerEvents = 'none';
-                    }
-                }, FADE_DURATION);
-            }
-        }
+    // 이제 viewElement의 부모인 overlay를 제어합니다.
+    const parentOverlay = viewElement ? viewElement.closest('.overlay') : null;
 
-        if (viewElement) {
-            if (show) {
-                viewElement.style.display = 'flex'; // 모든 view-content는 flex로 중앙 정렬
-                requestAnimationFrame(() => { // 다음 프레임에서 class 추가하여 transition 활성화
-                    viewElement.classList.add('visible');
-                });
-            } else {
-                viewElement.classList.remove('visible');
-                setTimeout(() => {
-                    if (!viewElement.classList.contains('visible')) {
-                        viewElement.style.display = 'none';
-                    }
-                }, FADE_DURATION);
-            }
+    if (parentOverlay) {
+        if (show) {
+            parentOverlay.classList.add('visible');
+            viewElement.classList.add('visible');
+        } else {
+            parentOverlay.classList.remove('visible');
+            viewElement.classList.remove('visible');
         }
     }
+}
 
     // --- 설정 창 닫기 함수 (settings.js에서 호출용) ---
     window.closeSettingsView = () => {
-        console.log('[MainMenuJS] Global closeSettingsView called.');
-        if (settingsViewPlaceholder && settingsViewPlaceholder.classList.contains('visible')) {
-            manageViewAndOverlay(settingsViewPlaceholder, false, false); // 설정창 숨김, 오버레이 숨김
+    console.log('[MainMenuJS] Global closeSettingsView called.');
+    if (settingsViewPlaceholder && settingsViewPlaceholder.classList.contains('visible')) {
+        if (appContainer) appContainer.classList.remove('no-drag');
+        // 이제 인수가 2개입니다.
+        manageViewAndOverlay(settingsViewPlaceholder, false);
         }
     };
 
@@ -364,6 +403,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (settingsButton && settingsViewPlaceholder && overlay) {
         settingsButton.addEventListener('click', async () => {
             console.log('[MainMenuJS] Settings button clicked.');
+
+            if (appContainer) appContainer.classList.add('no-drag');
 
             if (settingsViewPlaceholder.innerHTML.trim() === '' || settingsViewPlaceholder.firstElementChild?.id !== 'settings-view-content') {
                 try {
@@ -377,13 +418,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 } catch (error) {
                     console.error('[MainMenuJS] Error loading settings-content.html:', error);
                     alert('설정 화면을 불러오는 데 실패했습니다.');
+                    if (appContainer) appContainer.classList.remove('no-drag');
                     return;
                 }
             } else {
                 console.log('[MainMenuJS] settings-content.html already loaded.');
                  if (typeof initializeSettings === "function") initializeSettings(); // 값 새로고침 등을 위해 재호출
             }
-            manageViewAndOverlay(settingsViewPlaceholder, true, true); // 설정창 보임, 오버레이 보임
+            manageViewAndOverlay(settingsViewPlaceholder, true); // 설정창 보임, 오버레이 보임
         });
     } else {
         console.error('[MainMenuJS] Settings button, placeholder, or overlay missing. Settings disabled.');
@@ -391,23 +433,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- 오버레이 클릭 시 설정 창 닫기 ---
     if (overlay && settingsViewPlaceholder) {
-        overlay.addEventListener('click', (event) => {
-            if (event.target === overlay && settingsViewPlaceholder.classList.contains('visible')) {
-                console.log('[MainMenuJS] Overlay clicked. Closing settings view.');
-                window.closeSettingsView(); // 전역 닫기 함수 호출
-            }
-        });
-    }
+    overlay.addEventListener('click', (event) => {
+        // 사용자가 overlay의 검은 배경을 직접 클릭했을 때만 창을 닫습니다.
+        if (event.target === overlay && settingsViewPlaceholder.classList.contains('visible')) {
+            console.log('[MainMenuJS] Overlay clicked. Closing settings view.');
+            window.closeSettingsView();
+        }
+    });
+}
 
     // --- 초기 뷰 상태 ---
-    if (settingsViewPlaceholder) {
-        settingsViewPlaceholder.classList.remove('visible');
-        settingsViewPlaceholder.style.display = 'none';
-    }
-    if (overlay) {
+    if (overlay) { // overlay를 기준으로 확인
         overlay.classList.remove('visible');
-        overlay.style.pointerEvents = 'none';
+        if (settingsViewPlaceholder) {
+            settingsViewPlaceholder.classList.remove('visible');
+        }
     }
+
+    console.log('[MainMenuJS] Main menu setup complete.');
+
+    window.addEventListener('keydown', (event) => {
+        // 예: F10 키를 눌렀을 때 개발자 도구 토글
+        if (event.key === 'F10') {
+            console.log('[MainMenuJS] F10 key pressed. Requesting to toggle DevTools.');
+            
+            // preload.js를 통해 노출된 API 호출
+            if (window.electronAPI && typeof window.electronAPI.toggleDevTools === 'function') {
+                window.electronAPI.toggleDevTools();
+            } else {
+                console.warn('[MainMenuJS] toggleDevTools API is not available.');
+            }
+        }
+    });
+
+    console.log('[MainMenuJS] Initializing main menu setup...');
+    
+    // 초기화 함수 호출
+    loadPlayerSkin(); // <--- 이 호출이 반드시 있어야 합니다!
 
     console.log('[MainMenuJS] Main menu setup complete.');
 });

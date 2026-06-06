@@ -41,6 +41,48 @@ let mainWindow;
 const isDev = !app.isPackaged;
 
 let updaterEventSender = null; // 업데이트 알림을 보낼 렌더러의 event.sender 저장
+let initialUpdateCheckActive = false;
+
+function serializeUpdateError(err) {
+    if (!err) {
+        return { message: '알 수 없는 오류' };
+    }
+    return {
+        message: err.message || String(err),
+        stack: err.stack
+    };
+}
+
+function sendAutoUpdateNotification(status, data = {}) {
+    const payload = data instanceof Error ? serializeUpdateError(data) : data;
+    const targets = new Set();
+
+    if (updaterEventSender && !updaterEventSender.isDestroyed()) {
+        targets.add(updaterEventSender);
+    }
+
+    for (const win of [splashWindow, loginWindow, mainWindow]) {
+        if (win && !win.isDestroyed()) {
+            targets.add(win.webContents);
+        }
+    }
+
+    for (const target of targets) {
+        try {
+            if (!target.isDestroyed()) {
+                target.send('autoUpdateNotification', status, payload);
+            }
+        } catch (error) {
+            log.warn(`[AutoUpdater] Failed to send ${status} notification:`, error);
+        }
+    }
+}
+
+function scheduleLoginAfterUpdateStatus(delayMs = 750) {
+    if (initialUpdateCheckActive) {
+        setTimeout(() => proceedToLoginWindow(), delayMs);
+    }
+}
 
 function registerAutoUpdaterEvents() {
     log.info('[AutoUpdater] Registering global event listeners.');
@@ -48,109 +90,41 @@ function registerAutoUpdaterEvents() {
 
     autoUpdater.on('checking-for-update', () => {
         log.info('[AutoUpdater] Event: checking-for-update');
-        if (updaterEventSender && !updaterEventSender.isDestroyed()) {
-            updaterEventSender.send('autoUpdateNotification', 'checking-for-update');
-        }
+        sendAutoUpdateNotification('checking-for-update', { currentVersion: app.getVersion() });
     });
 
     autoUpdater.on('update-available', (info) => {
         log.info('[AutoUpdater] Event: update-available:', info);
-        if (updaterEventSender && !updaterEventSender.isDestroyed()) {
-            updaterEventSender.send('autoUpdateNotification', 'update-available', info);
-        }
-
-        if (splashWindow && !splashWindow.isDestroyed()) {
-            log.info('[AutoUpdater] Hiding splash window to show error dialog.');
-            splashWindow.hide(); // Hide the splash window
-        }
-
-        // autoDownload가 false로 설정되었으므로, 항상 사용자에게 다운로드 여부를 묻습니다.
-        dialog.showMessageBox({
-            type: 'info',
-            title: '업데이트 알림',
-            message: `새로운 버전 ${info.version}을(를) 다운로드할 수 있습니다.`,
-            detail: '지금 다운로드하고 설치 준비를 하시겠습니까? 앱은 다운로드 후 다시 시작해야 업데이트됩니다.',
-            buttons: ['지금 다운로드', '나중에'],
-            defaultId: 0,
-            cancelId: 1
-        }).then(result => {
-            if (result.response === 0) {
-                log.info('[AutoUpdater] User chose to download the update.');
-                autoUpdater.downloadUpdate();
-            } else {
-                log.info('[AutoUpdater] User chose to download later. Proceeding to login.');
-                proceedToLoginWindow();
-            }
-        }).catch(err => {
-            log.error('[AutoUpdater] Error showing update-available dialog:', err);
-            proceedToLoginWindow();
+        sendAutoUpdateNotification('update-available', {
+            ...info,
+            currentVersion: app.getVersion()
         });
     });
 
     autoUpdater.on('update-not-available', (info) => {
         log.info('[AutoUpdater] Event: update-not-available. Info:', JSON.stringify(info, null, 2));
-        log.info('[AutoUpdater] Calling proceedToLoginWindow() from update-not-available handler.'); // <<<--- 로그 추가
-        proceedToLoginWindow();
+        sendAutoUpdateNotification('update-not-available', {
+            ...info,
+            currentVersion: app.getVersion()
+        });
+        scheduleLoginAfterUpdateStatus();
     });
 
     autoUpdater.on('error', (err) => {
         log.error('[AutoUpdater] Event: error:', err);
-        if (updaterEventSender && !updaterEventSender.isDestroyed()) {
-            updaterEventSender.send('autoUpdateNotification', 'realerror', err);
-        }
-        dialog.showMessageBox({
-            type: 'error',
-            title: '업데이트 오류',
-            message: '업데이트 중 오류가 발생했습니다.',
-            detail: `오류 내용: ${err.message}\n\n애플리케이션을 계속 사용하시겠습니까?`,
-            buttons: ['계속 사용 (로그인 화면으로)', '앱 종료'],
-            defaultId: 0,
-            cancelId: 1
-        }).then(result => {
-            if (result.response === 0) {
-                proceedToLoginWindow();
-            } else {
-                app.quit();
-            }
-        }).catch(dialogErr => {
-            log.error('[AutoUpdater] Error showing error dialog:', dialogErr);
-            proceedToLoginWindow();
-        });
+        sendAutoUpdateNotification('realerror', serializeUpdateError(err));
     });
 
     autoUpdater.on('download-progress', (progressObj) => {
         log.info(`[AutoUpdater] Event: download-progress - ${progressObj.percent}%`);
-        const targetWindow = loginWindow || mainWindow;
-        if (targetWindow && !targetWindow.isDestroyed()) {
-             targetWindow.webContents.send('autoUpdateNotification', 'download-progress', progressObj);
-        }
+        sendAutoUpdateNotification('download-progress', progressObj);
     });
 
     autoUpdater.on('update-downloaded', (info) => {
         log.info('[AutoUpdater] Event: update-downloaded:', info);
-        if (updaterEventSender && !updaterEventSender.isDestroyed()) {
-            updaterEventSender.send('autoUpdateNotification', 'update-downloaded', info);
-        }
-        dialog.showMessageBox({
-            type: 'info',
-            title: '업데이트 다운로드 완료',
-            message: `버전 ${info.version} 다운로드가 완료되었습니다.`,
-            detail: '지금 설치하고 앱을 다시 시작하시겠습니까?',
-            buttons: ['지금 설치 및 재시작', '나중에 (앱 종료 시 설치)'],
-            defaultId: 0,
-            cancelId: 1
-        }).then(result => {
-            if (result.response === 0) {
-                autoUpdater.quitAndInstall();
-            } else {
-                // "나중에 설치" 선택 시, autoInstallOnAppQuit=true면 앱 종료 시 자동 설치됨.
-                // 사용자가 업데이트를 연기했으므로 로그인 창으로 진행.
-                log.info('[AutoUpdater] User chose to install on quit. Proceeding to login for now.');
-                proceedToLoginWindow();
-            }
-        }).catch(err => {
-            log.error('[AutoUpdater] Error showing update-downloaded dialog:', err);
-            proceedToLoginWindow();
+        sendAutoUpdateNotification('update-downloaded', {
+            ...info,
+            currentVersion: app.getVersion()
         });
     });
 }
@@ -174,6 +148,8 @@ function configureAutoUpdater(allowPrereleaseSetting) {
 
 function checkForInitialUpdates() {
     log.info('[AutoUpdater] Starting initial check for updates. isDev:', isDev);
+    initialUpdateCheckActive = true;
+    sendAutoUpdateNotification('checking-for-update', { currentVersion: app.getVersion() });
     autoUpdater.checkForUpdates()
         .then(updateCheckResult => {
             // <<<--- 이 부분의 로그가 중요! ---
@@ -223,8 +199,9 @@ function checkForInitialUpdates() {
             }
 
             if (proceed) {
-                log.info("[AutoUpdater] Final decision: proceed = true. Calling proceedToLoginWindow().");
-                proceedToLoginWindow();
+                log.info("[AutoUpdater] Final decision: proceed = true. Showing latest-version status before login.");
+                sendAutoUpdateNotification('update-not-available', { currentVersion: currentAppVersion });
+                scheduleLoginAfterUpdateStatus();
             } else {
                 log.warn("[AutoUpdater] Final decision: proceed = false. Waiting for events like 'update-available'. This might be the stall point if no event comes.");
             }
@@ -236,41 +213,48 @@ function checkForInitialUpdates() {
             } catch (e) {
                 log.warn('[AutoUpdater] Could not stringify rejected error:', e.message);
             }
-            // 다이얼로그 로직은 그대로 유지
-            dialog.showMessageBox({
-                type: 'warning',
-                title: '업데이트 확인 오류',
-                message: '업데이트를 확인하는 중 오류가 발생했습니다. 인터넷 연결을 확인해주세요.',
-                detail: `오류: ${err.message || '알 수 없는 오류'}\n\n로그인 화면으로 계속 진행합니다.`,
-                buttons: ['확인']
-            }).then(() => {
-                log.info("[AutoUpdater] Proceeding to login window after checkForUpdates error dialog (from catch).");
-                proceedToLoginWindow();
-            }).catch(dialogErr => {
-                log.error('[AutoUpdater] Error showing checkForUpdates error dialog (from catch):', dialogErr);
-                proceedToLoginWindow();
-            });
+            sendAutoUpdateNotification('realerror', serializeUpdateError(err));
         });
 }
 
 ipcMain.on('autoUpdateAction', (event, arg, data) => {
     if (event && event.sender) updaterEventSender = event.sender;
     switch(arg){
+        case 'registerUpdateWindow':
+            log.info('[IPC] autoUpdateAction: registerUpdateWindow');
+            sendAutoUpdateNotification('ready', { currentVersion: app.getVersion() });
+            break;
         case 'initAutoUpdater':
             log.info('[IPC] autoUpdateAction: initAutoUpdater (configure)');
             configureAutoUpdater(data);
-            if(updaterEventSender && !updaterEventSender.isDestroyed()) {
-                updaterEventSender.send('autoUpdateNotification', 'ready');
-            }
+            sendAutoUpdateNotification('ready', { currentVersion: app.getVersion() });
             break;
         case 'checkForUpdate':
             log.info('[IPC] autoUpdateAction: checkForUpdate');
             autoUpdater.checkForUpdates().catch(err => {
                 log.error('[AutoUpdater] IPC checkForUpdates promise rejected:', err);
-                if (updaterEventSender && !updaterEventSender.isDestroyed()) {
-                    updaterEventSender.send('autoUpdateNotification', 'realerror', err);
-                }
+                sendAutoUpdateNotification('realerror', serializeUpdateError(err));
             });
+            break;
+        case 'retryUpdate':
+            log.info('[IPC] autoUpdateAction: retryUpdate');
+            checkForInitialUpdates();
+            break;
+        case 'downloadUpdate':
+            log.info('[IPC] autoUpdateAction: downloadUpdate');
+            sendAutoUpdateNotification('download-started', { currentVersion: app.getVersion() });
+            autoUpdater.downloadUpdate().catch(err => {
+                log.error('[AutoUpdater] downloadUpdate promise rejected:', err);
+                sendAutoUpdateNotification('realerror', serializeUpdateError(err));
+            });
+            break;
+        case 'continueToLogin':
+            log.info('[IPC] autoUpdateAction: continueToLogin');
+            proceedToLoginWindow();
+            break;
+        case 'quitApp':
+            log.info('[IPC] autoUpdateAction: quitApp');
+            app.quit();
             break;
         case 'allowPrereleaseChange':
             log.info(`[IPC] autoUpdateAction: allowPrereleaseChange to ${data}`);
@@ -290,10 +274,12 @@ ipcMain.on('autoUpdateAction', (event, arg, data) => {
 function createSplashWindow() {
     log.info('[WindowManager] Creating splash window...');
     splashWindow = new BrowserWindow({
-        width: 400, height: 400, transparent: true, frame: false, alwaysOnTop: true,
+        width: 540, height: 540, transparent: true, frame: false, alwaysOnTop: true,
+        resizable: false, maximizable: false,
         webPreferences: { preload: path.join(__dirname, './js/preload.js') },
         icon: path.join(__dirname, 'assets', 'icon.png'),
     });
+    updaterEventSender = splashWindow.webContents;
     splashWindow.loadFile(path.join(__dirname, 'splash.html'));
     splashWindow.on('closed', () => {
         log.info('[WindowManager] Splash window closed.');
@@ -375,6 +361,7 @@ function showTheLoginWindow() {
 // 로그인 창으로 진행하는 함수
 function proceedToLoginWindow() {
     log.info('[WindowManager] Attempting to proceed to login window (logic part).');
+    initialUpdateCheckActive = false;
     if (splashWindow && !splashWindow.isDestroyed()) {
         log.info('[WindowManager] Closing splash window before proceeding to login.');
         splashWindow.close();
@@ -406,11 +393,11 @@ function createMainWindow() {
     mainWindow = new BrowserWindow({
         width: 1280,
         height: 720,
+        transparent: true,
         show: false,
         frame: false,
         resizable: false,      // <<--- 추가: 크기 조절 불가
         maximizable: false,    // <<--- 추가: 최대화 불가
-        transparent: true,
         // alwaysOnTop 속성은 이전 요청에 따라 제거됨
         icon: path.join(__dirname, 'assets', 'icon.png'),
         webPreferences: {
@@ -505,6 +492,15 @@ ipcMain.handle(MSFT_OPCODE.PROCESS_AUTH_CODE, async (event, authCode) => {
     try {
         const account = await AuthManager.addMicrosoftAccount(authCode);
         console.log('[Main] Account processed successfully by AuthManager:', account);
+
+        // 1. 방금 로그인한 계정을 "선택된 계정"으로 설정합니다.
+        ConfigManager.setSelectedAccount(account.uuid);
+        console.log(`[Main] Set selected account to: ${account.uuid}`);
+
+        // 2. 변경된 설정을 파일에 즉시 저장합니다.
+        await ConfigManager.save();
+        console.log('[Main] Config saved successfully after setting selected account.');
+
         return { success: true, value: account };
     } catch (error) {
         console.error('[Main] Error processing auth code with AuthManager:', error);
@@ -777,9 +773,9 @@ app.whenReady().then(async () => {
     createSplashWindow();
 
     ipcMain.on(IPC_CHANNELS.SPLASH_DONE, async () => {
-        log.info("Splash done. Closing splash."); // <<<--- 이 로그는 찍힘
+        log.info("Splash done. Keeping splash window open for update status.");
         if (splashWindow && !splashWindow.isDestroyed()) {
-            splashWindow.close(); // closed 이벤트 핸들러에서 splashWindow = null 처리
+            updaterEventSender = splashWindow.webContents;
         }
 
         log.info("Creating login window (initially hidden) before checking for updates."); // <<<--- 이 로그는 찍힘
@@ -900,3 +896,290 @@ app.on('will-quit', () => {
     log.info('App is about to quit.');
     // ConfigManager.save().catch(err => log.error('Error saving config on quit:', err));
 });
+// --- Local Launcher API for Website Integration ---
+const nodeHttp = require('node:http');
+const LAUNCHER_API_HOST = '127.0.0.1';
+const LAUNCHER_API_PORT = 17888;
+let launcherLocalApiServer = null;
+
+function launcherApiWriteJson(res, statusCode, payload) {
+    res.writeHead(statusCode, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Content-Type': 'application/json; charset=utf-8'
+    });
+    res.end(JSON.stringify(payload));
+}
+
+async function launcherApiReadJson(req) {
+    return new Promise((resolve, reject) => {
+        let body = '';
+        req.on('data', (chunk) => {
+            body += chunk;
+            if (body.length > 1024 * 1024) {
+                reject(new Error('payload_too_large'));
+            }
+        });
+        req.on('end', () => {
+            if (!body) {
+                resolve({});
+                return;
+            }
+            try {
+                resolve(JSON.parse(body));
+            } catch {
+                reject(new Error('invalid_json'));
+            }
+        });
+        req.on('error', reject);
+    });
+}
+
+function launcherApiGetSelectedMicrosoftAccount() {
+    const selectedAccount = ConfigManager.getSelectedAccount();
+    if (!selectedAccount || selectedAccount.type !== 'microsoft') {
+        return null;
+    }
+    return {
+        uuid: selectedAccount.uuid || null,
+        username: selectedAccount.username || selectedAccount.displayName || null,
+        type: selectedAccount.type
+    };
+}
+
+function ensureMicrosoftLoginPopupFromApi() {
+    if (msftAuthWindow && !msftAuthWindow.isDestroyed()) {
+        return { opened: false, alreadyOpen: true };
+    }
+
+    msftAuthSuccess = false;
+    msftAuthWindow = new BrowserWindow({
+        title: 'Microsoft 로그인',
+        backgroundColor: '#222222',
+        width: 520,
+        height: 600,
+        frame: true,
+        icon: './assets/icon.png'
+    });
+
+    msftAuthWindow.on('closed', () => {
+        if (!msftAuthSuccess) {
+            log.info('[LauncherAPI] Microsoft login window closed before completion.');
+        }
+        msftAuthWindow = undefined;
+    });
+
+    msftAuthWindow.webContents.on('did-navigate', async (_, uri) => {
+        if (!uri.startsWith(REDIRECT_URI_PREFIX)) {
+            return;
+        }
+
+        try {
+            const parsed = new URL(uri);
+            let authCode = parsed.searchParams.get('code');
+            let authError = parsed.searchParams.get('error');
+
+            if ((!authCode || !authError) && parsed.hash) {
+                const hashParams = new URLSearchParams(parsed.hash.replace(/^#/, ''));
+                authCode = authCode || hashParams.get('code');
+                authError = authError || hashParams.get('error');
+            }
+
+            if (authError || !authCode) {
+                log.warn('[LauncherAPI] Microsoft login ended without valid auth code.', { authError });
+            } else {
+                const account = await AuthManager.addMicrosoftAccount(authCode);
+                ConfigManager.setSelectedAccount(account.uuid);
+                await ConfigManager.save();
+                msftAuthSuccess = true;
+                log.info(`[LauncherAPI] Microsoft login completed: ${account.username || account.displayName || account.uuid}`);
+            }
+        } catch (error) {
+            log.error('[LauncherAPI] Failed to process Microsoft auth callback:', error);
+        } finally {
+            if (msftAuthWindow && !msftAuthWindow.isDestroyed()) {
+                msftAuthWindow.close();
+            }
+            msftAuthWindow = null;
+        }
+    });
+
+    msftAuthWindow.removeMenu();
+    msftAuthWindow.loadURL(
+        `https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?prompt=select_account&client_id=${AZURE_CLIENT_ID}&response_type=code&scope=XboxLive.signin%20offline_access&redirect_uri=https://login.microsoftonline.com/common/oauth2/nativeclient`
+    );
+
+    return { opened: true, alreadyOpen: false };
+}
+
+async function launcherApiHandleRequest(req, res) {
+    if (!req.url || !req.method) {
+        launcherApiWriteJson(res, 400, { ok: false, error: 'invalid_request' });
+        return;
+    }
+
+    if (req.method === 'OPTIONS') {
+        res.writeHead(204, {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+        });
+        res.end();
+        return;
+    }
+
+    const reqUrl = new URL(req.url, `http://${LAUNCHER_API_HOST}:${LAUNCHER_API_PORT}`);
+
+    if (req.method === 'GET' && reqUrl.pathname === '/health') {
+        const account = launcherApiGetSelectedMicrosoftAccount();
+        launcherApiWriteJson(res, 200, {
+            ok: true,
+            service: 'healingcamp-launcher',
+            now: new Date().toISOString(),
+            auth: {
+                authenticated: !!account,
+                account
+            }
+        });
+        return;
+    }
+
+    if (req.method === 'GET' && reqUrl.pathname === '/auth/status') {
+        const account = launcherApiGetSelectedMicrosoftAccount();
+        launcherApiWriteJson(res, 200, {
+            ok: true,
+            authenticated: !!account,
+            account
+        });
+        return;
+    }
+
+    if (req.method === 'POST' && reqUrl.pathname === '/auth/login') {
+        const popup = ensureMicrosoftLoginPopupFromApi();
+        launcherApiWriteJson(res, 200, {
+            ok: true,
+            popupOpened: popup.opened,
+            alreadyOpen: popup.alreadyOpen
+        });
+        return;
+    }
+
+    if (req.method === 'POST' && reqUrl.pathname === '/launch') {
+        try {
+            const payload = await launcherApiReadJson(req);
+            const mapFileUrl = payload?.map?.fileUrl || null;
+
+            if (!mapFileUrl) {
+                launcherApiWriteJson(res, 422, {
+                    ok: false,
+                    error: 'missing_map_file_url',
+                    message: 'map.fileUrl is required.'
+                });
+                return;
+            }
+
+            const account = launcherApiGetSelectedMicrosoftAccount();
+            if (!account) {
+                const popup = ensureMicrosoftLoginPopupFromApi();
+                launcherApiWriteJson(res, 401, {
+                    ok: false,
+                    error: 'microsoft_login_required',
+                    message: popup.opened
+                        ? 'Microsoft login popup opened. Complete login and click Play again.'
+                        : 'Microsoft login popup is already open. Complete login and click Play again.',
+                    popupOpened: popup.opened
+                });
+                return;
+            }
+
+            const targetWindow = (mainWindow && !mainWindow.isDestroyed())
+                ? mainWindow
+                : ((loginWindow && !loginWindow.isDestroyed()) ? loginWindow : null);
+
+            if (!targetWindow) {
+                launcherApiWriteJson(res, 503, {
+                    ok: false,
+                    error: 'launcher_window_unavailable',
+                    message: 'No available launcher window to start game flow.'
+                });
+                return;
+            }
+
+            const launchResult = await launchMinecraftGame(targetWindow);
+            if (!launchResult.success) {
+                launcherApiWriteJson(res, 500, {
+                    ok: false,
+                    error: 'launch_failed',
+                    message: launchResult.message || 'Failed to launch Minecraft.'
+                });
+                return;
+            }
+
+            launcherApiWriteJson(res, 200, {
+                ok: true,
+                message: launchResult.message || 'Launch started',
+                launchedPID: launchResult.launchedPID || null,
+                account,
+                requestedMap: {
+                    id: payload?.map?.id || null,
+                    title: payload?.map?.title || null,
+                    fileUrl: mapFileUrl
+                }
+            });
+        } catch (error) {
+            launcherApiWriteJson(res, 400, {
+                ok: false,
+                error: error instanceof Error ? error.message : 'unknown_error'
+            });
+        }
+        return;
+    }
+
+    launcherApiWriteJson(res, 404, { ok: false, error: 'not_found' });
+}
+
+function startLauncherLocalApiServer() {
+    if (launcherLocalApiServer) {
+        return;
+    }
+
+    launcherLocalApiServer = nodeHttp.createServer((req, res) => {
+        launcherApiHandleRequest(req, res).catch((error) => {
+            log.error('[LauncherAPI] Unhandled request error:', error);
+            launcherApiWriteJson(res, 500, { ok: false, error: 'internal_error' });
+        });
+    });
+
+    launcherLocalApiServer.on('error', (error) => {
+        log.error('[LauncherAPI] Server error:', error);
+    });
+
+    launcherLocalApiServer.listen(LAUNCHER_API_PORT, LAUNCHER_API_HOST, () => {
+        log.info(`[LauncherAPI] Listening on http://${LAUNCHER_API_HOST}:${LAUNCHER_API_PORT}`);
+    });
+}
+
+function stopLauncherLocalApiServer() {
+    if (!launcherLocalApiServer) {
+        return;
+    }
+
+    try {
+        launcherLocalApiServer.close();
+    } catch (error) {
+        log.error('[LauncherAPI] Failed to close server:', error);
+    } finally {
+        launcherLocalApiServer = null;
+    }
+}
+
+app.whenReady().then(() => {
+    startLauncherLocalApiServer();
+});
+
+app.on('before-quit', () => {
+    stopLauncherLocalApiServer();
+});
+
+// --- End Local Launcher API ---

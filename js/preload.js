@@ -128,6 +128,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getLauncherSettings: () => ipcRenderer.invoke('settings:get-all'),
     saveLauncherSettings: (settings) => ipcRenderer.invoke('settings:save-all', settings),
 
+    sendAutoUpdateAction: (action, data) => ipcRenderer.send('autoUpdateAction', action, data),
+    onAutoUpdateNotification: (callback) => {
+        const listener = (_event, status, data) => callback(status, data);
+        ipcRenderer.on('autoUpdateNotification', listener);
+        return () => ipcRenderer.removeListener('autoUpdateNotification', listener);
+    },
+
     // 진행률 업데이트 수신을 위한 리스너 등록 함수
     onLaunchProgressStart: (callback) => ipcRenderer.on('launch-progress-start', (_event, data) => callback(data)),
     onLaunchProgressUpdate: (callback) => ipcRenderer.on('launch-progress-update', (_event, data) => callback(data)),
