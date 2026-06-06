@@ -81,6 +81,7 @@ launcher-v2\tools\package-launcher.ps1 `
   -Version 0.1.0 `
   -LauncherDir launcher-v2\launcher\dist\win-unpacked `
   -Entrypoint HealingCampLauncher.exe `
+  -PackageUrl https://github.com/MacchiatoR/HealingCampLauncherElectron/releases/download/launcher-v2/launcher-0.1.0.zip `
   -OutputDir C:\tmp\healingcamp-v2-release
 ```
 

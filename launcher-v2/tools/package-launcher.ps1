@@ -7,6 +7,8 @@ param(
 
   [string]$Entrypoint = "HealingCampLauncher.exe",
 
+  [string]$PackageUrl,
+
   [string]$OutputDir = ".\release"
 )
 
@@ -28,10 +30,11 @@ if (Test-Path -LiteralPath $zipPath) {
 
 Compress-Archive -Path (Join-Path $launcherPath "*") -DestinationPath $zipPath -Force
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$manifestPackageUrl = if ([string]::IsNullOrWhiteSpace($PackageUrl)) { $zipPath } else { $PackageUrl }
 
 $manifest = [ordered]@{
   version = $Version
-  packageUrl = $zipPath
+  packageUrl = $manifestPackageUrl
   sha256 = $hash
   entrypoint = $Entrypoint
 }
