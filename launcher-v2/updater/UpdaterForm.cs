@@ -139,7 +139,7 @@ internal sealed class UpdaterForm : Form
         public ProgressView()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
-            BackColor = Color.Transparent;
+            BackColor = Color.FromArgb(22, 24, 27);
         }
 
         protected override void OnPaint(PaintEventArgs e)
