@@ -53,6 +53,19 @@ Build updater:
 dotnet build launcher-v2\updater\HealingCamp.Updater.csproj
 ```
 
+Publish the updater bootstrapper for users:
+
+```powershell
+dotnet publish launcher-v2\updater\HealingCamp.Updater.csproj `
+  -c Release `
+  -r win-x64 `
+  --self-contained true `
+  -p:PublishSingleFile=true `
+  -p:EnableCompressionInSingleFile=true `
+  -p:IncludeNativeLibrariesForSelfExtract=true `
+  -o launcher-v2\release\updater
+```
+
 Run launcher shell in development:
 
 ```powershell
