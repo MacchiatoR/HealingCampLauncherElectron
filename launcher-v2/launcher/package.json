@@ -1,6 +1,6 @@
 {
   "name": "healingcamp-launcher-v2",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "HealingCamp actual launcher payload for the V2 updater.",
   "author": "HealingCamp",
   "private": true,

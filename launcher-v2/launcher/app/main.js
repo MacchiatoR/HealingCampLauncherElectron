@@ -10,7 +10,7 @@ const { AZURE_CLIENT_ID, MSFT_OPCODE, MSFT_REPLY_TYPE, MSFT_ERROR } = require('.
 app.setName('HealingCamp Launcher');
 
 log.transports.file.level = 'info';
-log.transports.console.level = 'info';
+log.transports.console.level = app.isPackaged ? false : 'info';
 Object.assign(console, log.functions);
 
 const IPC_CHANNELS = {
