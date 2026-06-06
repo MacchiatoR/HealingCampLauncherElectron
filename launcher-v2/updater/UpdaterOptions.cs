@@ -2,6 +2,9 @@ namespace HealingCamp.Updater;
 
 internal sealed class UpdaterOptions
 {
+    private const string DefaultManifestUrl =
+        "https://github.com/MacchiatoR/HealingCampLauncherElectron/releases/download/launcher-v2/manifest.json";
+
     private static readonly string DefaultInstallRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "HealingCamp",
@@ -14,7 +17,7 @@ internal sealed class UpdaterOptions
     public static UpdaterOptions Parse(string[] args)
     {
         var installRoot = DefaultInstallRoot;
-        var manifest = Environment.GetEnvironmentVariable("HEALINGCAMP_MANIFEST_URL");
+        var manifest = Environment.GetEnvironmentVariable("HEALINGCAMP_MANIFEST_URL") ?? DefaultManifestUrl;
 
         for (var i = 0; i < args.Length; i++)
         {

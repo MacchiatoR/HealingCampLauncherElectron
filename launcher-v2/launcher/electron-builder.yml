@@ -1,0 +1,21 @@
+appId: kr.healingcamp.launcher
+productName: HealingCampLauncher
+artifactName: HealingCampLauncher-${version}.${ext}
+asar: true
+compression: maximum
+
+directories:
+  output: dist
+
+files:
+  - app/**
+  - package.json
+
+win:
+  icon: app/assets/icon.ico
+  target:
+    - target: portable
+      arch:
+        - x64
+
+publish: null

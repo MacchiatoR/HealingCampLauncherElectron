@@ -4,5 +4,8 @@
 /target/
 /logs/
 /dist/
+/launcher-v2/release/
 **/bin/
 **/obj/
+**/dist/
+**/node_modules/

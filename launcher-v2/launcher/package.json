@@ -1,9 +1,27 @@
 {
   "name": "healingcamp-launcher-v2",
   "version": "0.1.0",
+  "description": "HealingCamp actual launcher payload for the V2 updater.",
+  "author": "HealingCamp",
   "private": true,
   "main": "app/main.js",
   "scripts": {
-    "dev": "..\\..\\node_modules\\.bin\\electron.cmd ."
+    "dev": "..\\..\\node_modules\\.bin\\electron.cmd .",
+    "pack:dir": "..\\..\\node_modules\\.bin\\electron-builder.cmd --config electron-builder.yml --dir",
+    "dist": "..\\..\\node_modules\\.bin\\electron-builder.cmd --config electron-builder.yml"
+  },
+  "dependencies": {
+    "@xmcl/core": "^2.14.1",
+    "@xmcl/installer": "^6.1.0",
+    "adm-zip": "^0.5.16",
+    "axios": "^1.9.0",
+    "electron-log": "^5.4.0",
+    "fs-extra": "^11.3.0",
+    "helios-core": "^2.2.4",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "electron": "36.2.0",
+    "electron-builder": "^26.4.0"
   }
 }

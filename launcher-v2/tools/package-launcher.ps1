@@ -26,7 +26,7 @@ if (Test-Path -LiteralPath $zipPath) {
   Remove-Item -LiteralPath $zipPath -Force
 }
 
-Compress-Archive -LiteralPath (Join-Path $launcherPath "*") -DestinationPath $zipPath -Force
+Compress-Archive -Path (Join-Path $launcherPath "*") -DestinationPath $zipPath -Force
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
 $manifest = [ordered]@{

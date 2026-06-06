@@ -13,6 +13,14 @@ The updater starts first. It checks a manifest, downloads a versioned launcher z
 verifies SHA-256, extracts it under LocalAppData, updates `current.json`, and then
 starts the real launcher.
 
+By default it checks:
+
+```text
+https://github.com/MacchiatoR/HealingCampLauncherElectron/releases/download/launcher-v2/manifest.json
+```
+
+`HEALINGCAMP_MANIFEST_URL` or `--manifest` can override that URL for local tests.
+
 ## Runtime Layout
 
 ```text
@@ -52,6 +60,14 @@ cd launcher-v2\launcher
 npm run dev
 ```
 
+Build the real launcher payload:
+
+```powershell
+cd launcher-v2\launcher
+npm install
+npm run pack:dir
+```
+
 Run updater against a local manifest:
 
 ```powershell
@@ -63,7 +79,7 @@ Create a local launcher release zip and manifest:
 ```powershell
 launcher-v2\tools\package-launcher.ps1 `
   -Version 0.1.0 `
-  -LauncherDir C:\path\to\built-launcher `
+  -LauncherDir launcher-v2\launcher\dist\win-unpacked `
   -Entrypoint HealingCampLauncher.exe `
   -OutputDir C:\tmp\healingcamp-v2-release
 ```
@@ -74,3 +90,4 @@ launcher-v2\tools\package-launcher.ps1 `
 - The real launcher owns Minecraft login, game launch, mods, settings, and UI.
 - Launcher updates should be user-writable under LocalAppData to avoid UAC.
 - The updater can show the update progress before the real launcher process starts.
+- The real launcher does not use `electron-updater`; update checks belong to the updater process.

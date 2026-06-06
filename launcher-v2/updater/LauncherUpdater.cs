@@ -26,12 +26,18 @@ internal sealed class LauncherUpdater
 
         if (!string.IsNullOrWhiteSpace(options.Manifest))
         {
-            var manifest = await LoadManifestAsync(options.Manifest, cancellationToken);
             var current = LoadCurrentLauncher();
-
-            if (current?.Version != manifest.Version)
+            try
             {
-                await InstallVersionAsync(manifest, progress, cancellationToken);
+                var manifest = await LoadManifestAsync(options.Manifest, cancellationToken);
+                if (current?.Version != manifest.Version)
+                {
+                    await InstallVersionAsync(manifest, progress, cancellationToken);
+                }
+            }
+            catch (Exception error) when (current is not null && error is not OperationCanceledException)
+            {
+                progress.Report(new UpdaterProgress("업데이트 확인 실패", "설치된 런처로 계속합니다.", 100));
             }
         }
 
