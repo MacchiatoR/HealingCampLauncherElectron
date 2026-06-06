@@ -216,6 +216,7 @@
         const versionText = document.getElementById('versionText');
 
         let hasStartedUpdateCheck = false;
+        let applyProgressTimer = null;
 
         function sendAction(action, data) {
             if (window.electronAPI && window.electronAPI.sendAutoUpdateAction) {
@@ -249,6 +250,39 @@
             metaText.textContent = meta;
             setProgress(progress, { indeterminate, color });
             setActions(buttons);
+        }
+
+        function startApplyProgress(version) {
+            if (applyProgressTimer) {
+                clearInterval(applyProgressTimer);
+            }
+
+            let progress = 0;
+            const render = () => {
+                setState({
+                    badge: '업데이트 적용',
+                    title: `업데이트 적용 중 ${progress}%`,
+                    detail: '설치 프로그램 창 없이 새 런처 파일을 적용합니다.',
+                    progress
+                });
+            };
+
+            render();
+            applyProgressTimer = setInterval(() => {
+                progress = Math.min(100, progress + 4);
+                render();
+                if (progress >= 100) {
+                    clearInterval(applyProgressTimer);
+                    applyProgressTimer = null;
+                    setState({
+                        badge: '업데이트 적용 완료',
+                        title: `버전 ${version || '새 버전'} 적용 완료`,
+                        detail: '런처가 곧 다시 시작됩니다.',
+                        progress: 100
+                    });
+                    setTimeout(() => sendAction('applyDownloadedUpdate'), 450);
+                }
+            }, 80);
         }
 
         function formatBytes(bytes) {
@@ -300,7 +334,7 @@
                     setState({
                         badge: '업데이트 발견',
                         title: `버전 ${data.version || '새 버전'}을 사용할 수 있습니다`,
-                        detail: '새 런처 파일을 내부적으로 준비합니다. 완료되면 재시작 한 번으로 적용됩니다.',
+                        detail: '새 런처 파일을 내부적으로 준비합니다.',
                         meta: data.releaseDate ? `릴리즈 날짜 ${new Date(data.releaseDate).toLocaleString()}` : '',
                         indeterminate: true
                     });
@@ -321,19 +355,14 @@
                     setState({
                         badge: '다운로드',
                         title: `업데이트 준비 중 ${percent}%`,
-                        detail: '완료되면 로그인 화면으로 이동합니다.',
+                        detail: '다운로드가 끝나면 적용 단계로 넘어갑니다.',
                         meta: [transferred && total ? `${transferred} / ${total}` : '', speed ? `${speed}/s` : ''].filter(Boolean).join(' · '),
                         progress: percent
                     });
                     break;
                 }
                 case 'update-downloaded':
-                    setState({
-                        badge: '업데이트 준비 완료',
-                        title: `버전 ${data.version || '새 버전'} 준비 완료`,
-                        detail: '곧 로그인 화면으로 이동합니다.',
-                        progress: 100
-                    });
+                    startApplyProgress(data.version);
                     break;
                 case 'realerror':
                     setState({

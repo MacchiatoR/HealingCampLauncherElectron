@@ -42,6 +42,7 @@ const isDev = !app.isPackaged;
 
 let updaterEventSender = null; // 업데이트 알림을 보낼 렌더러의 event.sender 저장
 let initialUpdateCheckActive = false;
+let updateInstallScheduled = false;
 
 function serializeUpdateError(err) {
     if (!err) {
@@ -82,6 +83,17 @@ function scheduleLoginAfterUpdateStatus(delayMs = 750) {
     if (initialUpdateCheckActive) {
         setTimeout(() => proceedToLoginWindow(), delayMs);
     }
+}
+
+function installDownloadedUpdateSilently() {
+    if (updateInstallScheduled) {
+        log.info('[AutoUpdater] Silent update install already scheduled.');
+        return;
+    }
+    updateInstallScheduled = true;
+    initialUpdateCheckActive = false;
+    log.info('[AutoUpdater] Applying downloaded update silently and relaunching.');
+    autoUpdater.quitAndInstall(true, true);
 }
 
 function registerAutoUpdaterEvents() {
@@ -127,7 +139,6 @@ function registerAutoUpdaterEvents() {
             ...info,
             currentVersion: app.getVersion()
         });
-        scheduleLoginAfterUpdateStatus(900);
     });
 }
 
@@ -262,8 +273,9 @@ ipcMain.on('autoUpdateAction', (event, arg, data) => {
             autoUpdater.allowPrerelease = !!data;
             break;
         case 'installUpdateNow':
-            log.info('[IPC] autoUpdateAction: installUpdateNow is deprecated. Continuing to login.');
-            proceedToLoginWindow();
+        case 'applyDownloadedUpdate':
+            log.info(`[IPC] autoUpdateAction: ${arg}`);
+            installDownloadedUpdateSilently();
             break;
         default:
             log.warn('[IPC] autoUpdateAction: Unknown argument', arg);
