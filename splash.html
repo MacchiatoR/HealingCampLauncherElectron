@@ -321,7 +321,7 @@
                     setState({
                         badge: '다운로드',
                         title: `업데이트 준비 중 ${percent}%`,
-                        detail: '완료되면 재시작 버튼이 표시됩니다.',
+                        detail: '완료되면 로그인 화면으로 이동합니다.',
                         meta: [transferred && total ? `${transferred} / ${total}` : '', speed ? `${speed}/s` : ''].filter(Boolean).join(' · '),
                         progress: percent
                     });
@@ -329,14 +329,10 @@
                 }
                 case 'update-downloaded':
                     setState({
-                        badge: '설치 준비 완료',
+                        badge: '업데이트 준비 완료',
                         title: `버전 ${data.version || '새 버전'} 준비 완료`,
-                        detail: '재시작하면 새 버전이 적용됩니다.',
-                        progress: 100,
-                        buttons: [
-                            { label: '재시작해서 적용', kind: 'primary', onClick: () => sendAction('installUpdateNow') },
-                            { label: '나중에 실행', onClick: () => sendAction('continueToLogin') }
-                        ]
+                        detail: '곧 로그인 화면으로 이동합니다.',
+                        progress: 100
                     });
                     break;
                 case 'realerror':

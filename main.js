@@ -127,6 +127,7 @@ function registerAutoUpdaterEvents() {
             ...info,
             currentVersion: app.getVersion()
         });
+        scheduleLoginAfterUpdateStatus(900);
     });
 }
 
@@ -261,8 +262,8 @@ ipcMain.on('autoUpdateAction', (event, arg, data) => {
             autoUpdater.allowPrerelease = !!data;
             break;
         case 'installUpdateNow':
-            log.info('[IPC] autoUpdateAction: installUpdateNow');
-            autoUpdater.quitAndInstall();
+            log.info('[IPC] autoUpdateAction: installUpdateNow is deprecated. Continuing to login.');
+            proceedToLoginWindow();
             break;
         default:
             log.warn('[IPC] autoUpdateAction: Unknown argument', arg);
