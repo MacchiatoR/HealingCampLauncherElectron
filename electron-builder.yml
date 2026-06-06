@@ -10,9 +10,12 @@ compression: 'maximum'
 files:
   - '!{dist,.gitignore,.vscode,docs,dev-app-update.yml,.nvmrc,.eslintrc.json}'
   - '!dist-*'
+  - '!launcher-v2/**'
 
 extraResources:
   - 'libraries'
+  - from: 'launcher-v2/release/updater/HealingCamp.exe'
+    to: 'v2-updater/HealingCamp.exe'
 
 # Windows Configuration
 win: 

@@ -1,6 +1,8 @@
 // main.js
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const { spawn } = require('child_process');
 const remoteMain = require('@electron/remote/main')
 remoteMain.initialize()
 
@@ -36,6 +38,38 @@ const WINDOW_CONTROL = {
 let splashWindow;
 let loginWindow;
 let mainWindow;
+let legacyV2HandoffStarted = false;
+
+function launchBundledV2Updater() {
+    if (!app.isPackaged) {
+        return false;
+    }
+
+    const updaterPath = path.join(process.resourcesPath, 'v2-updater', 'HealingCamp.exe');
+    if (!fs.existsSync(updaterPath)) {
+        log.warn(`[V2Handoff] Bundled v2 updater not found: ${updaterPath}`);
+        return false;
+    }
+
+    try {
+        legacyV2HandoffStarted = true;
+        const child = spawn(updaterPath, [], {
+            cwd: path.dirname(updaterPath),
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: false
+        });
+        child.unref();
+        log.info(`[V2Handoff] Started bundled v2 updater: ${updaterPath}`);
+        app.quit();
+        setTimeout(() => app.exit(0), 1000);
+        return true;
+    } catch (error) {
+        legacyV2HandoffStarted = false;
+        log.error('[V2Handoff] Failed to start bundled v2 updater:', error);
+        return false;
+    }
+}
 
 // --- 오토 업데이터 ---
 const isDev = !app.isPackaged;
@@ -765,6 +799,9 @@ ipcMain.handle('settings:save-all', async (event, settings) => {
 // --- 앱 수명주기 이벤트 ---
 app.whenReady().then(async () => {
     log.info('App is ready.');
+    if (launchBundledV2Updater()) {
+        return;
+    }
 
     // <<<--- ConfigManager 초기화 및 로드 시점 변경 ---
     try {
@@ -1188,7 +1225,9 @@ function stopLauncherLocalApiServer() {
 }
 
 app.whenReady().then(() => {
-    startLauncherLocalApiServer();
+    if (!legacyV2HandoffStarted) {
+        startLauncherLocalApiServer();
+    }
 });
 
 app.on('before-quit', () => {
