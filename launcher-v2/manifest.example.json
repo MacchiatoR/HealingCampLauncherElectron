@@ -1,0 +1,6 @@
+{
+  "version": "0.1.0",
+  "packageUrl": "C:\\path\\to\\launcher-0.1.0.zip",
+  "sha256": "replace-with-package-sha256",
+  "entrypoint": "HealingCampLauncher.exe"
+}

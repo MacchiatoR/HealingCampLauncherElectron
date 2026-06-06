@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>HealingCamp Login</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #121417;
+      color: #f5f7fb;
+      font-family: "Segoe UI", "Malgun Gothic", sans-serif;
+    }
+
+    .layout {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 1fr 360px;
+    }
+
+    .hero {
+      position: relative;
+      display: flex;
+      align-items: flex-end;
+      min-height: 100vh;
+      padding: 48px;
+      overflow: hidden;
+      background:
+        linear-gradient(180deg, rgba(18, 20, 23, 0.2), rgba(18, 20, 23, 0.92)),
+        url("../../../assets/main_background3.png") center / cover;
+    }
+
+    .hero h1 {
+      margin: 0;
+      max-width: 620px;
+      font-size: 42px;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 18px;
+      padding: 36px;
+      border-left: 1px solid rgba(255, 255, 255, 0.12);
+      background: #181b20;
+    }
+
+    .panel h2 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    .panel p {
+      margin: 0;
+      color: #aeb6c4;
+      line-height: 1.55;
+      font-size: 14px;
+    }
+
+    button {
+      height: 44px;
+      border: 0;
+      border-radius: 8px;
+      background: #77d2b4;
+      color: #071411;
+      font: inherit;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <main class="layout">
+    <section class="hero">
+      <h1>HealingCamp Launcher</h1>
+    </section>
+    <section class="panel">
+      <h2>로그인</h2>
+      <p>이 화면부터 실제 런처 기능을 옮겨오면 됩니다.</p>
+      <button>Microsoft 로그인</button>
+    </section>
+  </main>
+</body>
+</html>

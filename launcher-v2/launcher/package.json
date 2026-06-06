@@ -1,0 +1,9 @@
+{
+  "name": "healingcamp-launcher-v2",
+  "version": "0.1.0",
+  "private": true,
+  "main": "app/main.js",
+  "scripts": {
+    "dev": "..\\..\\node_modules\\.bin\\electron.cmd ."
+  }
+}
