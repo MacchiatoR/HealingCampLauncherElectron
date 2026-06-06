@@ -1,6 +1,6 @@
 {
   "name": "healingcamp-launcher-v2",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "HealingCamp actual launcher payload for the V2 updater.",
   "author": "HealingCamp",
   "private": true,
@@ -18,6 +18,7 @@
     "electron-log": "^5.4.0",
     "fs-extra": "^11.3.0",
     "helios-core": "^2.2.4",
+    "helios-distribution-types": "^1.3.0",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {

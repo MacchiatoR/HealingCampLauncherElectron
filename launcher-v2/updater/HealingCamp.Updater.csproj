@@ -5,7 +5,11 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>HealingCamp</AssemblyName>
+    <AssemblyName>HealingCamp Launcher</AssemblyName>
     <RootNamespace>HealingCamp.Updater</RootNamespace>
+    <ApplicationIcon>..\..\assets\icon.ico</ApplicationIcon>
+    <AssemblyTitle>HealingCamp Launcher</AssemblyTitle>
+    <Product>HealingCamp Launcher</Product>
+    <Version>0.1.1</Version>
   </PropertyGroup>
 </Project>

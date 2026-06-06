@@ -45,7 +45,7 @@ function launchBundledV2Updater() {
         return false;
     }
 
-    const updaterPath = path.join(process.resourcesPath, 'v2-updater', 'HealingCamp.exe');
+    const updaterPath = path.join(process.resourcesPath, 'v2-updater', 'HealingCamp Launcher.exe');
     if (!fs.existsSync(updaterPath)) {
         log.warn(`[V2Handoff] Bundled v2 updater not found: ${updaterPath}`);
         return false;
