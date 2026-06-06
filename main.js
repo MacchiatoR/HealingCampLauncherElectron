@@ -99,6 +99,7 @@ function registerAutoUpdaterEvents() {
             ...info,
             currentVersion: app.getVersion()
         });
+        sendAutoUpdateNotification('download-started', { currentVersion: app.getVersion() });
     });
 
     autoUpdater.on('update-not-available', (info) => {
@@ -136,14 +137,13 @@ function configureAutoUpdater(allowPrereleaseSetting) {
     if (isDev) {
         autoUpdater.autoInstallOnAppQuit = false;
         autoUpdater.updateConfigPath = path.join(__dirname, 'dev-app-update.yml');
-        autoUpdater.autoDownload = false; // 개발 중에는 항상 다운로드 여부 확인
-        log.info(`[AutoUpdater] Dev mode: autoInstallOnAppQuit=false, autoDownload=false, updateConfigPath=${autoUpdater.updateConfigPath}`);
+        autoUpdater.autoDownload = true; // 업데이트 발견 시 내부적으로 다운로드
+        log.info(`[AutoUpdater] Dev mode: autoInstallOnAppQuit=false, autoDownload=true, updateConfigPath=${autoUpdater.updateConfigPath}`);
     } else {
         autoUpdater.autoInstallOnAppQuit = true; // 프로덕션에서는 앱 종료 시 자동 설치
-        autoUpdater.autoDownload = false; // 프로덕션에서도 사용자에게 다운로드 여부 확인
-        log.info('[AutoUpdater] Production mode: autoInstallOnAppQuit=true, autoDownload=false');
+        autoUpdater.autoDownload = true; // 프로덕션에서는 업데이트 발견 시 내부적으로 다운로드
+        log.info('[AutoUpdater] Production mode: autoInstallOnAppQuit=true, autoDownload=true');
     }
-    // macOS는 autoDownload = false가 기본적으로 권장됨 (위 설정으로 커버됨)
 }
 
 function checkForInitialUpdates() {
