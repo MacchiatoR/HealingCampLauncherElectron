@@ -13,6 +13,7 @@ const {
 } = require('@xmcl/installer');
 const path = require('path');
 const fs = require('fs-extra');
+const { pipeline } = require('stream/promises');
 const { app, ipcMain, BrowserWindow } = require('electron');
 const axios = require('axios'); // HTTP 요청용
 const AdmZip = require('adm-zip'); // ZIP 압축 해제
@@ -68,6 +69,60 @@ function sendProgressUpdate(eventChannel, data) {
     } else {
         log.warn(`[GameLauncher] Target window for progress is not available or destroyed.`);
     }
+}
+
+function formatBytes(bytes) {
+    const units = ['B', 'KiB', 'MiB', 'GiB'];
+    let value = bytes;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex++;
+    }
+    return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+async function downloadResourceZipToFile(remoteZipUrl, destinationPath, logger, progressBase = 0, progressWeight = 0) {
+    const zipResponse = await axios({
+        method: 'get',
+        url: remoteZipUrl,
+        responseType: 'stream',
+        timeout: 300000 // 5분
+    });
+
+    const totalBytes = Number.parseInt(zipResponse.headers?.['content-length'] || '0', 10) || 0;
+    let downloadedBytes = 0;
+    let lastReportedPercent = -1;
+    let lastReportedBytes = 0;
+
+    zipResponse.data.on('data', (chunk) => {
+        downloadedBytes += chunk.length;
+
+        if (totalBytes > 0 && progressWeight > 0) {
+            const percent = Math.floor((downloadedBytes / totalBytes) * 100);
+            if (percent !== lastReportedPercent) {
+                lastReportedPercent = percent;
+                const progress = Math.min(100, Math.round(progressBase + (percent / 100) * progressWeight));
+                sendProgressUpdate('launch-progress-update', {
+                    message: '리소스 다운로드 중...',
+                    progress,
+                    details: `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)} (${percent}%)`,
+                    taskKey: 'custom-resource-download'
+                });
+            }
+        } else if (downloadedBytes - lastReportedBytes >= 5 * 1024 * 1024) {
+            lastReportedBytes = downloadedBytes;
+            sendProgressUpdate('launch-progress-update', {
+                message: '리소스 다운로드 중...',
+                progress: progressBase,
+                details: `${formatBytes(downloadedBytes)} 다운로드됨`,
+                taskKey: 'custom-resource-download'
+            });
+        }
+    });
+
+    await pipeline(zipResponse.data, fs.createWriteStream(destinationPath));
+    logger.info(`Resource ZIP downloaded successfully: ${formatBytes(downloadedBytes)}`);
 }
 
 /**
@@ -435,9 +490,10 @@ async function getAuthParametersForLaunch() {
 /**
  * 리소스 업데이트 (ZIP 다운로드 및 해제)
  */
-async function checkAndApplyResourceUpdate(resourceRootPath, logger, localVersionFileName, remoteVersionUrl, remoteZipUrl) {
+async function checkAndApplyResourceUpdate(resourceRootPath, logger, localVersionFileName, remoteVersionUrl, remoteZipUrl, progressBase = 0, progressWeight = 0) {
     logger.info('Checking for resource updates...');
     const localVersionFilePath = path.join(resourceRootPath, localVersionFileName);
+    let zipFilePath = null;
     let localVersion = '0';
 
     try {
@@ -460,15 +516,15 @@ async function checkAndApplyResourceUpdate(resourceRootPath, logger, localVersio
 
         logger.info(`Update required: Local ${localVersion} -> Remote ${remoteVersion}`);
         logger.info(`Downloading resource ZIP from: ${remoteZipUrl}`);
-        
-        const zipResponse = await axios({
-            method: 'get',
-            url: remoteZipUrl,
-            responseType: 'arraybuffer',
-            timeout: 300000 // 5분
-        });
-        const zipBuffer = Buffer.from(zipResponse.data);
-        logger.info('Resource ZIP downloaded successfully.');
+        const downloadProgressWeight = progressWeight > 0 ? Math.max(1, Math.floor(progressWeight * 0.8)) : 0;
+        const applyProgress = Math.min(100, progressBase + downloadProgressWeight);
+        const finalProgress = Math.min(100, progressBase + progressWeight);
+        const downloadDirPath = path.join(resourceRootPath, '.downloads');
+        zipFilePath = path.join(downloadDirPath, `resource-${remoteVersion}.zip`);
+
+        await fs.ensureDir(downloadDirPath);
+        await fs.remove(zipFilePath);
+        await downloadResourceZipToFile(remoteZipUrl, zipFilePath, logger, progressBase, downloadProgressWeight);
 
         // 안전한 삭제를 위해 try-catch로 감쌉니다.
         const modsFolderPath = path.join(resourceRootPath, 'mods');
@@ -494,18 +550,35 @@ async function checkAndApplyResourceUpdate(resourceRootPath, logger, localVersio
         }
 
         logger.info(`Extracting ZIP to: ${resourceRootPath}`);
-        const zip = new AdmZip(zipBuffer);
+        sendProgressUpdate('launch-progress-update', {
+            message: '리소스 적용 중...',
+            progress: applyProgress,
+            details: '압축 해제 중...',
+            taskKey: 'custom-resource-apply'
+        });
+        const zip = new AdmZip(zipFilePath);
         zip.extractAllTo(resourceRootPath, true); // overwrite = true
         logger.info('ZIP extracted successfully.');
 
         await fs.writeFile(localVersionFilePath, remoteVersion, 'utf-8');
         logger.info(`Local resource version updated to: ${remoteVersion}`);
+        sendProgressUpdate('launch-progress-update', {
+            message: '리소스 업데이트 완료',
+            progress: finalProgress,
+            taskKey: 'custom-resource-update-result'
+        });
 
         return true;
 
     } catch (error) {
         logger.error('Failed to check or apply resource update:', error.message);
         return false;
+    } finally {
+        if (zipFilePath) {
+            await fs.remove(zipFilePath).catch((cleanupError) => {
+                logger.warn(`Failed to remove temporary resource ZIP: ${cleanupError.message}`);
+            });
+        }
     }
 }
 
@@ -622,7 +695,9 @@ async function launchMinecraftGame(windowToUpdate) {
             log,
             LOCAL_VERSION_FILE_NAME,
             RESOURCE_VERSION_URL,
-            RESOURCE_ZIP_URL
+            RESOURCE_ZIP_URL,
+            overallProgress,
+            STAGE_WEIGHTS.CUSTOM_RESOURCE_UPDATE
         );
         overallProgress += STAGE_WEIGHTS.CUSTOM_RESOURCE_UPDATE;
 
