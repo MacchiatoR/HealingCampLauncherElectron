@@ -14,8 +14,8 @@ files:
 
 extraResources:
   - 'libraries'
-  - from: 'launcher-v2/release/updater/HealingCamp Launcher.exe'
-    to: 'v2-updater/HealingCamp Launcher.exe'
+  - from: 'launcher-v2/release/updater/HealingCampLauncher.exe'
+    to: 'v2-updater/HealingCampLauncher.exe'
 
 # Windows Configuration
 win: 
